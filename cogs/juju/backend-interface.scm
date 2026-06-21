@@ -14,12 +14,12 @@
   backend-capabilities
   backend-supports?
   unsupported-message
-  ;; read operations
+  discard-confirm-note
+  ;; read operations (blame is a 'blame query op, not a named field)
   backend-status
   backend-diff
   backend-log
   backend-show
-  backend-blame
   ;; read-only listings (dispatched through the backend's query-fn)
   backend-query
   backend-refs
@@ -53,6 +53,10 @@
   backend-split
   backend-abandon
   backend-describe
+  backend-rebase-interactive
+  backend-rebase-continue
+  backend-rebase-abort
+  backend-rebase-skip
   ;; branch/bookmark + stash (phase 4)
   backend-switch
   backend-branch-create
@@ -80,11 +84,11 @@
 ;; mutate-fn: (backend op-symbol args-list) -> result hash; #f when the backend
 ;;            implements no mutations yet (phase 1 read-only stubs).
 ;; query-fn: (backend op-symbol args-list) -> arbitrary value (usually a list of
-;;           display lines); the read-only counterpart to mutate-fn for listings
-;;           that do not fit the five core reads (refs, op log, reflog, remotes).
-;;           #f when the backend provides none.
+;;           display lines); the read-only counterpart to mutate-fn for reads
+;;           that do not fit the four core ones (refs, op log, reflog, remotes,
+;;           blame). #f when the backend provides none.
 (struct backend
-  (name root capabilities status-fn diff-fn log-fn show-fn blame-fn mutate-fn query-fn)
+  (name root capabilities status-fn diff-fn log-fn show-fn mutate-fn query-fn)
   #:transparent)
 
 ;;@doc
@@ -92,7 +96,7 @@
 ;; are optional positional extras (in that order). A missing `mutate-fn` makes
 ;; every mutation report "not supported"; a missing `query-fn` makes every
 ;; listing empty.
-(define (make-backend name root capabilities status-fn diff-fn log-fn show-fn blame-fn . opt)
+(define (make-backend name root capabilities status-fn diff-fn log-fn show-fn . opt)
   (let ([mutate-fn (if (and (pair? opt) (car opt)) (car opt) #f)]
         [query-fn (if (and (pair? opt) (pair? (cdr opt)) (cadr opt)) (cadr opt) #f)])
     (backend name root capabilities
@@ -100,7 +104,6 @@
       diff-fn
       log-fn
       show-fn
-      blame-fn
       mutate-fn
       query-fn)))
 
@@ -117,6 +120,16 @@
     " is not supported by "
     (symbol->string (backend-name b))))
 
+;;@doc
+;; The warning appended to a discard confirmation prompt. A backend with a
+;; first-class operation log ('oplog, i.e. jj) can reverse a discard with undo;
+;; elsewhere it is permanent. Shared so the typed command and the status view
+;; word it identically.
+(define (discard-confirm-note b)
+  (if (backend-supports? b 'oplog)
+    "(undo reverses it)"
+    "This cannot be undone"))
+
 ;;; Read operations ;;;
 
 ;;@doc Produce the backend's `status` struct.
@@ -130,9 +143,6 @@
 
 ;;@doc Show a single rev -> hash with 'commit and 'hunks.
 (define (backend-show b rev) ((backend-show-fn b) b rev))
-
-;;@doc Blame `file` over `line-range` -> list of blame lines.
-(define (backend-blame b file line-range) ((backend-blame-fn b) b file line-range))
 
 ;;; Read-only listings ;;;
 ;;;
@@ -206,6 +216,16 @@
 (define (backend-split b paths opts) (backend-mutate b 'split (list paths opts)))
 (define (backend-abandon b rev opts) (backend-mutate b 'abandon (list rev opts)))
 (define (backend-describe b message opts) (backend-mutate b 'describe (list message opts)))
+
+;; Interactive rebase. `plan` is a backend-neutral hash carrying the ordered
+;; todo-entry list ('entries) and the base revision ('base); each backend
+;; projects it its own way (git writes a todo file; jj runs a step sequence). A
+;; git rebase may pause (an `edit` entry or a conflict); the continue/abort/skip
+;; ops drive it from there. jj never pauses, so it leaves those unsupported.
+(define (backend-rebase-interactive b plan) (backend-mutate b 'rebase-interactive (list plan)))
+(define (backend-rebase-continue b) (backend-mutate b 'rebase-continue '()))
+(define (backend-rebase-abort b) (backend-mutate b 'rebase-abort '()))
+(define (backend-rebase-skip b) (backend-mutate b 'rebase-skip '()))
 
 ;; Branch/bookmark management and git stash. A named ref is a branch (git) or a
 ;; bookmark (jj); both back the same op symbols, so command code never branches

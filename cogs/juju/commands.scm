@@ -21,6 +21,10 @@
 (require "config.scm")
 (require "status-view.scm")
 (require "text-view.scm")
+(require "view-rows.scm")
+(require "rebase-todo.scm")
+(require "rebase-view.scm")
+(require "blame-view.scm")
 (require "menu-model.scm")
 (require "menu.scm")
 (require "prompts.scm")
@@ -48,6 +52,10 @@
   juju-redo
   ;; history rewriting
   juju-rebase
+  juju-rebase-interactive
+  juju-rebase-continue
+  juju-rebase-abort
+  juju-rebase-skip
   juju-cherry-pick
   juju-revert
   juju-reset
@@ -74,9 +82,12 @@
   juju-submodule
   ;; polish: escape hatch, transient menus, aliases
   juju-run
+  juju-dispatch
   juju-rebase-menu
   juju-remote-menu
   juju-branch-menu
+  juju-commit-menu
+  juju-log-menu
   juju-annotate
   juju-reword
   juju-drop
@@ -120,15 +131,42 @@
         (show-text-view " juju diff "
           (if (null? hunks) '() (hunks->lines hunks)))))))
 
-;;@doc Blame the current file in a scrollable overlay.
+;;@doc
+;; Blame the current file interactively: Enter shows a line's commit, l chases
+;; to the parent revision, h goes back.
 (define (juju-blame)
   (let ([b (resolve-backend)])
     (when b
       (let ([path (current-file-path)])
         (if (not path)
           (set-status! "juju: no file to blame (open one first)")
-          (let ([lines (backend-blame b path #f)])
-            (show-text-view (string-append " juju blame  " path " ") lines)))))))
+          (let ([rel (rel-path (backend-root b) path)])
+            (open-blame-view rel
+              (run-blame-query b rel #f #f)
+              (blame-query-fn b)
+              (blame-show-fn b))))))))
+
+;; The 'blame query behind the view's chase loop. rev #f is the working copy;
+;; before #t blames at the parent of rev (suffix syntax stays in the backend).
+(define (run-blame-query b file rev before)
+  (backend-query b 'blame (list (hash 'file file 'rev rev 'before before))))
+
+(define (blame-query-fn b)
+  (lambda (file rev before) (run-blame-query b file rev before)))
+
+;; Show a blamed line's commit in a text view. A commit-less result (e.g.
+;; git's all-zero "not committed yet" sha) echoes instead.
+(define (blame-show-fn b)
+  (lambda (commit-id)
+    (let* ([shown (backend-show b commit-id)]
+           [commit (hash-ref shown 'commit)])
+      (if (not commit)
+        (set-status! "juju: nothing to show (line not committed?)")
+        (show-text-view
+          (string-append " " (commit-record-short-id commit) "  "
+            (commit-record-subject commit)
+            " ")
+          (commit-show-lines shown))))))
 
 ;;@doc
 ;; Override which backend the current workspace uses ('git or 'jj), remembered
@@ -186,7 +224,9 @@
     "juju: current file has no changes to discard"
     (lambda (b spec)
       (push-component!
-        (prompt "Discard changes to the current file? This cannot be undone [y/N]: "
+        (prompt (string-append "Discard changes to the current file? "
+                 (discard-confirm-note b)
+                 " [y/N]: ")
           (lambda (input)
             (when (confirmed? input) (report (backend-discard b (list spec))))))))))
 
@@ -248,6 +288,36 @@
         (if (not onto)
           (set-status! "juju: usage - :juju-rebase [--autosquash] <ref>")
           (report (backend-rebase b (hash 'onto onto 'autosquash autosquash))))))))
+
+;;@doc
+;; Open the interactive rebase editor: :juju-rebase-interactive [base]. Edits the
+;; commits base..tip (the upstream by default on git; the mutable ancestors of @
+;; on jj). Reorder, then assign pick/reword/edit/squash/fixup/drop, then Enter to
+;; apply (q to cancel). On git an `edit` step or a conflict pauses the rebase;
+;; resume with :juju-rebase-continue / -abort / -skip.
+(define (juju-rebase-interactive . args)
+  (with-cap 'rebase-interactive
+    (lambda (b)
+      (open-rebase-interactive b (if (pair? args) (to-string (car args)) #f)))))
+
+;; The thunk the editor runs on confirm: apply the edited plan and report. The
+;; backend (and its base) are captured when the editor opens; the root is stable
+;; for the editor's lifetime.
+(define (rebase-apply-callback b base)
+  (lambda (entries)
+    (report (backend-rebase-interactive b (hash 'entries entries 'base base)))))
+
+;;@doc Continue a paused rebase after resolving an edit/conflict (git).
+(define (juju-rebase-continue)
+  (with-cap 'rebase-interactive (lambda (b) (report (backend-rebase-continue b)))))
+
+;;@doc Abort a paused rebase, restoring the original tip (git).
+(define (juju-rebase-abort)
+  (with-cap 'rebase-interactive (lambda (b) (report (backend-rebase-abort b)))))
+
+;;@doc Skip the current commit in a paused rebase (git).
+(define (juju-rebase-skip)
+  (with-cap 'rebase-interactive (lambda (b) (report (backend-rebase-skip b)))))
 
 ;;@doc Cherry-pick a commit onto the current branch: :juju-cherry-pick <rev> (git).
 (define (juju-cherry-pick . args)
@@ -512,7 +582,22 @@
               (lambda (input)
                 (when (not (blank? input))
                   (report (backend-rebase b
-                           (hash 'onto input 'autosquash (sw switches 'autosquash)))))))))))))
+                           (hash 'onto input 'autosquash (sw switches 'autosquash))))))))))
+      (menu-action #\i "interactive (edit todo)"
+        (lambda (switches) (open-rebase-interactive b #f))))))
+
+;; Open the interactive editor for backend `b` over `base..tip` (default base
+;; when #f). Shared by the typed command and the rebase menu.
+(define (open-rebase-interactive b base)
+  (let* ([range (backend-query b 'rebase-range (list (hash 'base base)))]
+         [commits (hash-ref range 'commits)]
+         [resolved (hash-ref range 'base)])
+    (cond
+      [(and (null? commits) (not resolved))
+        (set-status!
+          "juju: HEAD has no upstream; pass a base - :juju-rebase-interactive <base>")]
+      [(null? commits) (set-status! "juju: no commits to rebase in range")]
+      [else (open-rebase-view (make-todo commits) (rebase-apply-callback b resolved))])))
 
 ;;@doc Open the remote transient (fetch / pull / push; force-with-lease on git).
 (define (juju-remote-menu)
@@ -525,9 +610,21 @@
     (if (backend-supports? b 'force-push)
       (list (menu-switch #\F 'force "force-with-lease (push)" #f))
       '())
+    (if (backend-supports? b 'fetch-prune)
+      (list (menu-switch #\P 'prune "--prune (fetch)" #f))
+      '())
+    (if (backend-supports? b 'pull-rebase)
+      (list (menu-switch #\R 'rebase "--rebase (pull)" #f))
+      '())
     (list
-      (menu-action #\f "fetch" (lambda (switches) (report (backend-mutate b 'fetch (list (hash))))))
-      (menu-action #\u "pull" (lambda (switches) (report (backend-mutate b 'pull (list (hash))))))
+      (menu-action #\f "fetch"
+        (lambda (switches)
+          (report (backend-mutate b 'fetch
+                   (list (if (sw switches 'prune) (hash 'prune #t) (hash)))))))
+      (menu-action #\u "pull"
+        (lambda (switches)
+          (report (backend-mutate b 'pull
+                   (list (if (sw switches 'rebase) (hash 'rebase #t) (hash)))))))
       (menu-action #\p "push"
         (lambda (switches)
           (report (backend-mutate b 'push
@@ -589,6 +686,79 @@
                         (lambda (up)
                           (when (not (blank? up)) (report (backend-set-upstream b name up)))))))))))))
       '())))
+
+;;@doc Open the commit transient (--no-verify / --signoff on git; commit / amend).
+(define (juju-commit-menu)
+  (with-cap 'commit
+    (lambda (b) (show-menu (menu-title b "Commit") (commit-menu-entries b)))))
+
+(define (commit-menu-entries b)
+  (append
+    (list (menu-info "Commit"))
+    (if (backend-supports? b 'commit-no-verify)
+      (list (menu-switch #\n 'no-verify "--no-verify (skip hooks)" #f))
+      '())
+    (if (backend-supports? b 'commit-signoff)
+      (list (menu-switch #\S 'signoff "--signoff" #f))
+      '())
+    (list
+      (menu-action #\c "commit"
+        (lambda (switches)
+          (push-component!
+            (prompt "Commit message: "
+              (lambda (input)
+                (report (backend-commit b (or input "") (commit-opts switches))))))))
+      (menu-action #\a "amend"
+        (lambda (switches)
+          (push-component!
+            (prompt "Amend message (empty keeps existing): "
+              (lambda (input)
+                (report (backend-amend b (or input "") (commit-opts switches)))))))))))
+
+;; Assemble the commit/amend opts hash from the menu's switch state.
+(define (commit-opts switches)
+  (let* ([h (hash)]
+         [h (if (sw switches 'no-verify) (hash-insert h 'no-verify #t) h)]
+         [h (if (sw switches 'signoff) (hash-insert h 'signoff #t) h)])
+    h))
+
+;;@doc Open the log transient (-n count infix, then show the log).
+(define (juju-log-menu)
+  (let ([b (resolve-backend)])
+    (when b (show-menu (menu-title b "Log") (log-menu-entries b)))))
+
+(define (log-menu-entries b)
+  (list
+    (menu-info "Log")
+    (menu-arg #\n 'count "-n count" (number->string (juju-log-count)))
+    (menu-action #\l "show log"
+      (lambda (switches)
+        (let* ([n (parse-positive-int (sw switches 'count) (juju-log-count))]
+               [commits (backend-log b #f (hash 'limit n))])
+          (show-text-view
+            (string-append " juju log (" (symbol->string (backend-name b)) ") ")
+            (map format-commit-line commits)))))))
+
+;; Parse a positive integer from `s` (an arg value), falling back to `default`.
+(define (parse-positive-int s default)
+  (let ([n (and (string? s) (string->number (string-trim s)))])
+    (if (and (integer? n) (> n 0)) n default)))
+
+;;@doc Open the top-level transient: a menu of the juju sub-menus.
+(define (juju-dispatch)
+  (let ([b (resolve-backend)])
+    (when b (show-menu (menu-title b "Dispatch") (dispatch-entries)))))
+
+;; The sub-menu launchers. Each action closes this menu (handle-menu closes
+;; before running the thunk) and opens the chosen transient.
+(define (dispatch-entries)
+  (list
+    (menu-info "juju dispatch")
+    (menu-action #\c "commit…" (lambda (switches) (juju-commit-menu)))
+    (menu-action #\r "rebase…" (lambda (switches) (juju-rebase-menu)))
+    (menu-action #\R "remote…" (lambda (switches) (juju-remote-menu)))
+    (menu-action #\b "branch / bookmark…" (lambda (switches) (juju-branch-menu)))
+    (menu-action #\l "log…" (lambda (switches) (juju-log-menu)))))
 
 ;;; Command aliases ;;;
 ;;;

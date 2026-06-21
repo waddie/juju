@@ -22,6 +22,7 @@
 
 (provide run-vcs
   run-vcs-input
+  run-vcs-env
   run-vcs-lines
   vcs-ok?
   vcs-stdout
@@ -48,6 +49,14 @@
   (set-env-var! cmd "NO_COLOR" "1")
   cmd)
 
+;; Apply caller env overrides on top of the non-interactive defaults. The only
+;; current user is the interactive-rebase reword path, which must point
+;; GIT_EDITOR at a message-feeding helper (the default forces it to `true`).
+(define (apply-env-overrides! cmd env)
+  (when (hash? env)
+    (for-each (lambda (k) (set-env-var! cmd k (hash-ref env k))) (hash-keys->list env)))
+  cmd)
+
 ;; Per-backend leading args: the workspace-root flag plus paging/colour off.
 ;; `git -C <root> --no-pager -c color.ui=never`; `jj -R <root> --no-pager
 ;; --color never`. These precede the caller's args so a command never has to
@@ -70,25 +79,33 @@
 ;; A missing binary or spawn failure yields 'ok #f with the error text in
 ;; 'stderr rather than throwing.
 (define (run-vcs root program args)
-  (run-vcs* root program args #f))
+  (run-vcs* root program args #f #f))
 
 ;;@doc
 ;; As `run-vcs`, but writes `input` (a string) to the child's standard input
 ;; and closes it (sending EOF) before reading output. Used to feed a constructed
 ;; patch to `git apply -` without a temp file.
 (define (run-vcs-input root program args input)
-  (run-vcs* root program args input))
+  (run-vcs* root program args input #f))
+
+;;@doc
+;; As `run-vcs`, but with `env` (a string->string hash) merged over the forced
+;; non-interactive environment. Used by the interactive rebase to override
+;; GIT_EDITOR for reword message feeding.
+(define (run-vcs-env root program args env)
+  (run-vcs* root program args #f env))
 
 ;; Core spawn/capture. When `input` is a string it is written to the child's
 ;; stdin and the stream closed; when #f stdin is left unwritten (it closes on
 ;; drop, giving the child EOF, so nothing blocks reading the tty).
-(define (run-vcs* root program args input)
+(define (run-vcs* root program args input env)
   (with-handler
     (lambda (err)
       (hash 'stdout "" 'stderr (to-string err) 'exit #f 'ok #f))
     (let* ([full-args (append (root-args program root) args)]
            [cmd (command program full-args)])
       (apply-non-interactive-env! cmd)
+      (apply-env-overrides! cmd env)
       ;; Pipe stdout, stderr, and stdin.
       (set-piped-stdout! cmd)
       (let ([spawn-result (spawn-process cmd)])
@@ -102,17 +119,28 @@
                        (when sin
                          (display input sin)
                          (close-output-port sin))))]
-                 ;; Read stdout fully, then stderr, then reap. VCS commands
-                 ;; write little or nothing to stderr, so draining stdout first
-                 ;; cannot deadlock against a full stderr pipe in practice.
-                 [out (read-port-to-string (child-stdout child))]
-                 [err (let ([e (child-stderr child)])
-                       (if e (read-port-to-string e) ""))]
+                 ;; Drain stdout and stderr concurrently on native threads.
+                 ;; Each reader returns on its pipe's EOF, so neither can wedge
+                 ;; the other by filling its pipe while we block on the far
+                 ;; stream. Reap only once both pipes have closed.
+                 [out-box (box "")]
+                 [err-box (box "")]
+                 [out-t (spawn-native-thread
+                         (lambda ()
+                           (set-box! out-box
+                             (read-port-to-string (child-stdout child)))))]
+                 [err-t (spawn-native-thread
+                         (lambda ()
+                           (set-box! err-box
+                             (let ([e (child-stderr child)])
+                               (if e (read-port-to-string e) "")))))]
+                 [_ (thread-join! out-t)]
+                 [_ (thread-join! err-t)]
                  [wait-result (wait child)]
                  [exit (if (Ok? wait-result) (Ok->value wait-result) #f)])
-            (hash 'stdout out
+            (hash 'stdout (unbox out-box)
               'stderr
-              err
+              (unbox err-box)
               'exit
               exit
               'ok

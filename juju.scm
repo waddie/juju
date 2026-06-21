@@ -55,6 +55,10 @@
   juju-undo
   juju-redo
   juju-rebase
+  juju-rebase-interactive
+  juju-rebase-continue
+  juju-rebase-abort
+  juju-rebase-skip
   juju-cherry-pick
   juju-revert
   juju-reset
@@ -79,9 +83,12 @@
   juju-worktree
   juju-submodule
   juju-run
+  juju-dispatch
   juju-rebase-menu
   juju-remote-menu
   juju-branch-menu
+  juju-commit-menu
+  juju-log-menu
   juju-annotate
   juju-reword
   juju-drop
@@ -170,7 +177,7 @@
 (define (juju-push . args) (apply cmd.juju-push args))
 
 ;;@doc
-;; Undo the last operation (jj only for now; git undo is not yet supported).
+;; Undo the last operation (jj: `jj undo`; git: best-effort via the reflog).
 (define (juju-undo) (cmd.juju-undo))
 
 ;;@doc
@@ -186,6 +193,23 @@
 ;;@doc
 ;; Rebase onto a ref: :juju-rebase [--autosquash] <ref>.
 (define (juju-rebase . args) (apply cmd.juju-rebase args))
+
+;;@doc
+;; Open the interactive rebase editor: :juju-rebase-interactive [base]. Reorder
+;; commits and assign pick/reword/edit/squash/fixup/drop, then apply.
+(define (juju-rebase-interactive . args) (apply cmd.juju-rebase-interactive args))
+
+;;@doc
+;; Continue a paused interactive rebase after resolving an edit/conflict (git).
+(define (juju-rebase-continue) (cmd.juju-rebase-continue))
+
+;;@doc
+;; Abort a paused interactive rebase, restoring the original tip (git).
+(define (juju-rebase-abort) (cmd.juju-rebase-abort))
+
+;;@doc
+;; Skip the current commit in a paused interactive rebase (git).
+(define (juju-rebase-skip) (cmd.juju-rebase-skip))
 
 ;;@doc
 ;; Cherry-pick a commit onto the current branch: :juju-cherry-pick <rev> (git).
@@ -297,16 +321,29 @@
 (define (juju-run . args) (apply cmd.juju-run args))
 
 ;;@doc
+;; Open the top-level transient menu: a dispatcher to the juju sub-menus.
+(define (juju-dispatch) (cmd.juju-dispatch))
+
+;;@doc
 ;; Open the rebase transient menu (switch --autosquash on git; rebase onto a ref).
 (define (juju-rebase-menu) (cmd.juju-rebase-menu))
 
 ;;@doc
-;; Open the remote transient menu (fetch / pull / push; force-with-lease on git).
+;; Open the remote transient menu (fetch / pull / push; force-with-lease, --prune,
+;; --rebase on git).
 (define (juju-remote-menu) (cmd.juju-remote-menu))
 
 ;;@doc
 ;; Open the branch/bookmark transient menu (create / switch / rename / delete).
 (define (juju-branch-menu) (cmd.juju-branch-menu))
+
+;;@doc
+;; Open the commit transient menu (--no-verify / --signoff on git; commit / amend).
+(define (juju-commit-menu) (cmd.juju-commit-menu))
+
+;;@doc
+;; Open the log transient menu (-n count infix, then show the log).
+(define (juju-log-menu) (cmd.juju-log-menu))
 
 ;;@doc
 ;; Blame the current file. Alias of :juju-blame (jj calls it annotate).

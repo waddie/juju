@@ -48,6 +48,13 @@
   commit-record-date
   commit-record-subject
   commit-record-refs
+  blame-line
+  blame-line?
+  blame-line-commit
+  blame-line-short-id
+  blame-line-orig-line
+  blame-line-text
+  make-blame-line
   make-status
   make-section
   maybe-section
@@ -101,6 +108,12 @@
 ;; tags, bookmarks). For jj, `id` is the change id and `short-id` the commit id.
 (struct commit-record (id short-id author date subject refs) #:transparent)
 
+;; One line of blame output. `commit` is a full commit sha (git) or change id
+;; (jj), usable as a rev argument; `short-id` is its display prefix.
+;; `orig-line` is the line's number in `commit`'s version of the file (an
+;; integer), kept for future line-following across a chase.
+(struct blame-line (commit short-id orig-line text) #:transparent)
+
 ;;; Constructors with defaults ;;;
 
 (define (make-status header sections) (status header sections))
@@ -130,6 +143,9 @@
 
 (define (make-commit-record id short-id author date subject refs)
   (commit-record id short-id author date subject refs))
+
+(define (make-blame-line commit short-id orig-line text)
+  (blame-line commit short-id orig-line text))
 
 ;;@doc
 ;; Return a copy of `fi` with its hunks (and expanded flag) replaced. Used after

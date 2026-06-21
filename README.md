@@ -1,10 +1,12 @@
-# juju
+# Juju
 
 A `git`/`jj` interface for the [Helix](https://helix-editor.com) editor.
 
 One interface, two backends: Git and [Jujutsu](https://github.com/jj-vcs/jj).
 
 `juju` shells out to the `git` and `jj` binaries; there is no FFI.
+
+This is very early alpha software. Use at own risk.
 
 ## Install
 
@@ -33,60 +35,67 @@ Add the `require` line above to your `init.scm` and restart Helix.
 
 ## Commands
 
-| Command                   | Action                                           |
-| ------------------------- | ------------------------------------------------ |
-| `:juju` / `:juju-status`  | Open the status view                             |
-| `:juju-log`               | Recent commits / changes                         |
-| `:juju-diff`              | Working-copy diff                                |
-| `:juju-blame`             | Blame the current file                           |
-| `:juju-backend git\|jj`   | Set or report the backend for this workspace     |
-| `:juju-stage`             | Stage the current file (`git`)                   |
-| `:juju-unstage`           | Unstage the current file (`git`)                 |
-| `:juju-discard`           | Discard the current file (confirms first)        |
-| `:juju-stage-all`         | Stage every change (`git`)                       |
-| `:juju-unstage-all`       | Unstage every change (`git`)                     |
-| `:juju-commit [msg]`      | Commit (prompts when no message given)           |
-| `:juju-amend [msg]`       | Amend HEAD / re-describe `@` (`jj`)              |
-| `:juju-extend`            | Fold changes into the latest commit              |
-| `:juju-commit-fixup rev`  | Record a fixup! (`git`) / squash into (`jj`)     |
-| `:juju-fetch [remote]`    | Fetch                                            |
-| `:juju-pull [remote]`     | Pull / integrate                                 |
-| `:juju-push [remote]`     | Push                                             |
-| `:juju-undo`              | Undo the last operation (jj; reflog on git)      |
-| `:juju-redo`              | Redo the last undone operation (`jj`)            |
-| `:juju-rebase [-as] ref`  | Rebase onto a ref (`--autosquash`) (git/jj)      |
-| `:juju-cherry-pick rev`   | Cherry-pick a commit (`git`)                     |
-| `:juju-revert rev`        | Revert a commit (git/jj)                         |
-| `:juju-reset [mode] rev`  | Reset HEAD: soft / mixed / hard (`git`)          |
-| `:juju-squash [rev]`      | Fold `@` into its parent or a rev (`jj`)         |
-| `:juju-split path...`     | Split files out of `@` into a new change (`jj`)  |
-| `:juju-abandon [rev]`     | Abandon a change, `@` when omitted (`jj`)        |
-| `:juju-describe [msg]`    | Set `@`’s description (`jj`)                     |
-| `:juju-switch [target]`   | Switch to a branch/bookmark/commit               |
-| `:juju-branch-create n`   | Create a branch/bookmark (optional rev)          |
-| `:juju-branch-rename`     | Rename a branch/bookmark: `<old> <new>`          |
-| `:juju-branch-delete n`   | Delete a branch/bookmark                         |
-| `:juju-set-upstream`      | Set a branch’s upstream: `<branch> <up>` (`git`) |
-| `:juju-stash [msg]`       | Stash the working changes (`git`)                |
-| `:juju-stash-pop [ref]`   | Pop a stash, latest when omitted (`git`)         |
-| `:juju-stash-apply [ref]` | Apply a stash without dropping it (`git`)        |
-| `:juju-stash-drop [ref]`  | Drop a stash (`git`)                             |
-| `:juju-refs`              | List branches/tags/remotes, or bookmarks         |
-| `:juju-remote`            | List configured remotes                          |
-| `:juju-oplog`             | Show the operation log (`jj`)                    |
-| `:juju-reflog`            | Show the reflog (`git`)                          |
-| `:juju-worktree`          | List worktrees (`git`) / workspaces (`jj`)       |
-| `:juju-submodule`         | List submodule status (`git`)                    |
-| `:juju-run args...`       | Run a raw backend line in root, show output      |
-| `:juju-rebase-menu`       | Transient: rebase (switch `--autosquash`)        |
-| `:juju-remote-menu`       | Transient: fetch / pull / push                   |
-| `:juju-branch-menu`       | Transient: create / switch / rename / delete     |
-| `:juju-annotate`          | Alias of `:juju-blame`                           |
-| `:juju-reword [msg]`      | Alias of `:juju-describe`                        |
-| `:juju-drop [rev]`        | Alias of `:juju-abandon`                         |
-| `:juju-bookmark-create`   | Alias of `:juju-branch-create`                   |
-| `:juju-bookmark-rename`   | Alias of `:juju-branch-rename`                   |
-| `:juju-bookmark-delete`   | Alias of `:juju-branch-delete`                   |
+| Command                           | Action                                                                            |
+| --------------------------------- | --------------------------------------------------------------------------------- |
+| `:juju` / `:juju-status`          | Open the status view                                                              |
+| `:juju-log`                       | Recent commits / changes                                                          |
+| `:juju-diff`                      | Working-copy diff                                                                 |
+| `:juju-blame`                     | Blame the current file interactively (show, chase revisions)                      |
+| `:juju-backend git\|jj`           | Set or report the backend for this workspace                                      |
+| `:juju-stage`                     | Stage the current file (`git`)                                                    |
+| `:juju-unstage`                   | Unstage the current file (`git`)                                                  |
+| `:juju-discard`                   | Discard the current file (confirms first)                                         |
+| `:juju-stage-all`                 | Stage every change (`git`)                                                        |
+| `:juju-unstage-all`               | Unstage every change (`git`)                                                      |
+| `:juju-commit [msg]`              | Commit (prompts when no message given)                                            |
+| `:juju-amend [msg]`               | Amend HEAD / re-describe `@` (`jj`)                                               |
+| `:juju-extend`                    | Fold changes into the latest commit                                               |
+| `:juju-commit-fixup rev`          | Record a fixup! (`git`) / squash into (`jj`)                                      |
+| `:juju-fetch [remote]`            | Fetch                                                                             |
+| `:juju-pull [remote]`             | Pull / integrate                                                                  |
+| `:juju-push [remote]`             | Push                                                                              |
+| `:juju-undo`                      | Undo the last operation (jj; reflog on git)                                       |
+| `:juju-redo`                      | Redo the last undone operation (`jj`)                                             |
+| `:juju-rebase [-as] ref`          | Rebase onto a ref (`--autosquash`) (git/jj)                                       |
+| `:juju-rebase-interactive [base]` | Open the interactive rebase editor (git/jj)                                       |
+| `:juju-rebase-continue`           | Continue a paused rebase (`git`)                                                  |
+| `:juju-rebase-abort`              | Abort a paused rebase, restore the tip (`git`)                                    |
+| `:juju-rebase-skip`               | Skip the current commit in a paused rebase (`git`)                                |
+| `:juju-cherry-pick rev`           | Cherry-pick a commit (`git`)                                                      |
+| `:juju-revert rev`                | Revert a commit (git/jj)                                                          |
+| `:juju-reset [mode] rev`          | Reset HEAD: soft / mixed / hard (`git`)                                           |
+| `:juju-squash [rev]`              | Fold `@` into its parent or a rev (`jj`)                                          |
+| `:juju-split path...`             | Split files out of `@` into a new change (`jj`)                                   |
+| `:juju-abandon [rev]`             | Abandon a change, `@` when omitted (`jj`)                                         |
+| `:juju-describe [msg]`            | Set `@`’s description (`jj`)                                                      |
+| `:juju-switch [target]`           | Switch to a branch/bookmark/commit                                                |
+| `:juju-branch-create n`           | Create a branch/bookmark (optional rev)                                           |
+| `:juju-branch-rename`             | Rename a branch/bookmark: `<old> <new>`                                           |
+| `:juju-branch-delete n`           | Delete a branch/bookmark                                                          |
+| `:juju-set-upstream`              | Set a branch’s upstream: `<branch> <up>` (`git`)                                  |
+| `:juju-stash [msg]`               | Stash the working changes (`git`)                                                 |
+| `:juju-stash-pop [ref]`           | Pop a stash, latest when omitted (`git`)                                          |
+| `:juju-stash-apply [ref]`         | Apply a stash without dropping it (`git`)                                         |
+| `:juju-stash-drop [ref]`          | Drop a stash (`git`)                                                              |
+| `:juju-refs`                      | List branches/tags/remotes, or bookmarks                                          |
+| `:juju-remote`                    | List configured remotes                                                           |
+| `:juju-oplog`                     | Show the operation log (`jj`)                                                     |
+| `:juju-reflog`                    | Show the reflog (`git`)                                                           |
+| `:juju-worktree`                  | List worktrees (`git`) / workspaces (`jj`)                                        |
+| `:juju-submodule`                 | List submodule status (`git`)                                                     |
+| `:juju-run args...`               | Run a raw backend line in root, show output                                       |
+| `:juju-dispatch`                  | Transient: top-level menu of the sub-menus                                        |
+| `:juju-rebase-menu`               | Transient: rebase (`--autosquash`; interactive)                                   |
+| `:juju-remote-menu`               | Transient: fetch / pull / push (`--prune`, `--rebase`, force-with-lease on `git`) |
+| `:juju-branch-menu`               | Transient: create / switch / rename / delete                                      |
+| `:juju-commit-menu`               | Transient: commit / amend (`--no-verify`, `--signoff` on `git`)                   |
+| `:juju-log-menu`                  | Transient: log with a `-n count` infix                                            |
+| `:juju-annotate`                  | Alias of `:juju-blame`                                                            |
+| `:juju-reword [msg]`              | Alias of `:juju-describe`                                                         |
+| `:juju-drop [rev]`                | Alias of `:juju-abandon`                                                          |
+| `:juju-bookmark-create`           | Alias of `:juju-branch-create`                                                    |
+| `:juju-bookmark-rename`           | Alias of `:juju-branch-rename`                                                    |
+| `:juju-bookmark-delete`           | Alias of `:juju-branch-delete`                                                    |
 
 The `:juju-stage` / `:juju-unstage` / `:juju-discard` typed commands act on the
 whole current file. For hunk- or line-level granularity, use the status view,
@@ -99,6 +108,9 @@ where the action applies to whatever is selected.
 | `j` / `k`, `↑` / `↓` | Move                                                   |
 | `Ctrl-d` / `Ctrl-u`  | Page down / up                                         |
 | `Home` / `End`       | First / last                                           |
+| `}` / `{`            | Next / previous section                                |
+| `^`                  | Jump to the enclosing section header                   |
+| `/`                  | Search; `n` / `N` jump to the next / previous match    |
 | `Tab`                | Fold / unfold the section or file under the cursor     |
 | `Enter`              | Visit a file / show a commit’s diff / fold a section   |
 | `v`                  | Mark / unmark the current row for a multi-row action   |
@@ -108,6 +120,7 @@ where the action applies to whatever is selected.
 | `c` / `a` / `e`      | Commit / amend / extend                                |
 | `f` / `F` / `P`      | Fetch / pull / push                                    |
 | `V` / `y` / `r`      | Revert / cherry-pick / rebase-onto the selected commit |
+| `i`                  | Interactive rebase from the selected commit to the tip |
 | `b`                  | Switch to the selected branch/bookmark/commit          |
 | `p`                  | Pop the selected stash                                 |
 | `z` / `Z`            | Undo / redo (`jj op log`; `git reflog`, best-effort)   |
@@ -123,6 +136,54 @@ adapts to its operand: `x` discards file rows, drops a stash row, or abandons a
 commit row. History keys (`V` / `y` / `r` / `b`) act on commit rows in the
 recent, bookmark, and unpushed/unpulled sections. Keys for features a backend
 lacks (staging under `jj`, stash under `jj`) are inert.
+
+## Interactive rebase editor
+
+`:juju-rebase-interactive [base]` (or `i` on a commit in the status view) opens a
+floating editor listing the commits to be rebased, oldest at the top. Reorder
+them and assign each an action, then `Enter` to apply or `q` to cancel. Without a
+`base` it edits the commits above the upstream (`git`) or the mutable ancestors of
+`@` (`jj`); launched from a commit it edits from that commit to the tip.
+
+| Key                  | Action                                                    |
+| -------------------- | --------------------------------------------------------- |
+| `j` / `k`, `↑` / `↓` | Move the cursor                                           |
+| `J` / `K`            | Move the commit under the cursor down / up                |
+| `p`                  | pick (keep as-is)                                         |
+| `r`                  | reword (prompts for a new message on apply)               |
+| `e`                  | edit (pause to amend; `git` only)                         |
+| `s`                  | squash (fold into the commit above, keep both messages)   |
+| `f`                  | fixup (fold into the commit above, drop its message)      |
+| `d`                  | drop (remove the commit)                                  |
+| `v`                  | Mark / unmark a row (an action then applies to all marks) |
+| `Enter`              | Apply the plan                                            |
+| `q` / `Esc`          | Cancel                                                    |
+
+The same plan drives both backends. On `git` it becomes a `rebase -i` todo; an
+`edit` step or a conflict pauses the rebase, surfaced in the status header, and
+`:juju-rebase-continue` / `-abort` / `-skip` drive it from there. On `jj` it
+becomes a sequence of `abandon` / `squash` / `describe` / `rebase` commands keyed
+on change-ids; `jj` never pauses, and the whole batch is reversible with
+`:juju-undo`. A reword whose prompt is left blank keeps the commit unchanged.
+
+## Interactive blame
+
+`:juju-blame` (alias `:juju-annotate`) opens a floating blame of the current
+file. Every line carries the commit (`git`) or change (`jj`) that introduced
+it; the first line of each run is coloured to mark the boundary.
+
+| Key                  | Action                                            |
+| -------------------- | ------------------------------------------------- |
+| `j` / `k`, `↑` / `↓` | Move the cursor                                   |
+| `Ctrl-u` / `Ctrl-d`  | Move ten lines                                    |
+| `Enter`              | Show the cursor line's commit                     |
+| `l`                  | Chase: reblame at the parent of the line's commit |
+| `h` / `Backspace`    | Go back to the previous blame                     |
+| `q` / `Esc`          | Quit                                              |
+
+Chasing from a root commit's line (or a line whose file did not exist at the
+parent) reports and stays put. Under `git`, uncommitted lines blame to the
+all-zero id and have no commit to show.
 
 ## Keybindings
 

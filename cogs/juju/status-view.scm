@@ -24,6 +24,8 @@
 (require "view-rows.scm")
 (require "operand.scm")
 (require "text-view.scm")
+(require "rebase-todo.scm")
+(require "rebase-view.scm")
 (require "render.scm")
 (require "scroll.scm")
 (require "keys.scm")
@@ -42,8 +44,14 @@
 ;; message/message-tag drive the bottom status line. cursor/top index the row
 ;; list; selection is a list of marked row indices (the multi-select operand).
 ;; When selection is empty an action falls back to the row under the cursor.
+;; search-query/search-matches/search-pos hold the in-buffer search: the last
+;; query, the matching row indices, and the position within that match list
+;; (-1 when no search is active). Cleared on reload.
 (struct view-state
-  (backend status fold diff-cache cursor top message message-tag selection)
+  (backend status fold diff-cache cursor top message message-tag selection
+    search-query
+    search-matches
+    search-pos)
   #:mutable
   #:transparent)
 
@@ -54,7 +62,7 @@
 (define (make-view-state backend fold)
   (let* ([raw (backend-status backend)]
          [st (apply-fold-state fold raw)])
-    (view-state backend st fold (hash) 0 0 "" 'info '())))
+    (view-state backend st fold (hash) 0 0 "" 'info '() "" '() -1)))
 
 ;; Re-fetch status, drop cached diffs (content may have changed), keep folds.
 (define (reload! state-box)
@@ -66,6 +74,7 @@
     (set-view-state-status! state st)
     (set-view-state-diff-cache! state (hash))
     (set-view-state-selection! state '())
+    (clear-search! state)
     (clamp-cursor! state)
     (set-view-state-message! state "Refreshed")
     (set-view-state-message-tag! state 'info)))
@@ -97,15 +106,30 @@
   (let* ([rows (current-rows state)]
          [n (length rows)])
     (when (> n 0)
+      ;; Each branch returns a real value (the unused cursor index), never bare
+      ;; (void): Steel miscompiles a loop whose every tail branch evaluates to
+      ;; void, treating the (void) literal as an application (#<void> applied).
       (let loop ([c (view-state-cursor state)] [steps n])
         (let ([next (+ c delta)])
           (cond
             ;; Ran out of rows to scan, or stepping off either end: stay put.
-            [(<= steps 0) (void)]
-            [(or (< next 0) (>= next n)) (void)]
+            [(<= steps 0) c]
+            [(or (< next 0) (>= next n)) c]
             [(row-selectable? (list-ref rows next))
-              (set-view-state-cursor! state next)]
+              (set-view-state-cursor! state next)
+              next]
             [else (loop next (- steps 1))]))))))
+
+;; Page the cursor by `delta` rows, snapping to the nearest selectable row in
+;; the direction of travel (falling back the other way), so an overshoot lands
+;; on the last selectable row instead of stranding the cursor.
+(define (page-cursor! state delta)
+  (let* ([rows (current-rows state)]
+         [n (length rows)])
+    (when (> n 0)
+      (let* ([target (max 0 (min (+ (view-state-cursor state) delta) (- n 1)))]
+             [idx (nearest-selectable-index rows target (if (< delta 0) -1 1))])
+        (when idx (set-view-state-cursor! state idx))))))
 
 (define (cursor-to-edge! state which)
   (let* ([rows (current-rows state)]
@@ -123,6 +147,73 @@
   (let ([rows (current-rows state)]
         [c (view-state-cursor state)])
     (if (and (>= c 0) (< c (length rows))) (list-ref rows c) #f)))
+
+;;; Section navigation ;;;
+;;;
+;;; Jump the cursor between section headers (siblings) or up to the enclosing
+;;; section (parent), the Helix-native answer to Magit's M-n/M-p/^ grammar.
+
+(define (cursor-to-section! state which)
+  (let* ([rows (current-rows state)]
+         [from (view-state-cursor state)]
+         [target (cond
+                  [(eq? which 'next) (next-section-index rows from)]
+                  [(eq? which 'prev) (prev-section-index rows from)]
+                  [else (parent-section-index rows from)])])
+    (set-view-state-cursor! state target)))
+
+;;; In-buffer search ;;;
+;;;
+;;; `/` prompts for a query; matching row indices are stored and the cursor jumps
+;;; to the first match at or after it. n/N cycle the matches (wrapping). Search
+;;; state is cleared on reload so stale indices never drive the cursor.
+
+(define (clear-search! state)
+  (set-view-state-search-query! state "")
+  (set-view-state-search-matches! state '())
+  (set-view-state-search-pos! state -1))
+
+(define (start-search! state-box)
+  (push-component!
+    (prompt "Search: "
+      (lambda (input) (apply-search! (unbox state-box) (or input ""))))))
+
+(define (apply-search! state query)
+  (let* ([rows (current-rows state)]
+         [matches (search-matches rows query)])
+    (set-view-state-search-query! state query)
+    (set-view-state-search-matches! state matches)
+    (cond
+      [(null? matches)
+        (set-view-state-search-pos! state -1)
+        (set-msg! state (string-append "No match: " query) 'error)]
+      [else
+        (let ([p (first-match-pos matches (view-state-cursor state))])
+          (set-view-state-search-pos! state p)
+          (set-view-state-cursor! state (list-ref matches p))
+          (set-msg! state (search-status p (length matches)) 'info))])))
+
+;; The position within `matches` of the first index at or after `cursor`,
+;; wrapping to 0 when every match precedes it.
+(define (first-match-pos matches cursor)
+  (let loop ([ms matches] [p 0])
+    (cond
+      [(null? ms) 0]
+      [(>= (car ms) cursor) p]
+      [else (loop (cdr ms) (+ p 1))])))
+
+(define (search-step! state dir)
+  (let ([matches (view-state-search-matches state)])
+    (if (null? matches)
+      (set-msg! state "No active search (press /)" 'info)
+      (let* ([n (length matches)]
+             [p (modulo (+ (view-state-search-pos state) dir n) n)])
+        (set-view-state-search-pos! state p)
+        (set-view-state-cursor! state (list-ref matches p))
+        (set-msg! state (search-status p n) 'info)))))
+
+(define (search-status p n)
+  (string-append "Match " (number->string (+ p 1)) "/" (number->string n)))
 
 ;;; Actions ;;;
 
@@ -280,7 +371,9 @@
             (push-component!
               (prompt
                 (string-append "Discard " (number->string (length specs))
-                  " item(s)? This cannot be undone [y/N]: ")
+                  " item(s)? "
+                  (discard-confirm-note backend)
+                  " [y/N]: ")
                 (lambda (input)
                   (when (confirmed? input)
                     (let ([r (backend-discard backend specs)])
@@ -338,8 +431,11 @@
 ;;; depending on the key pressed.
 
 ;; The commit/ref operand specs the action applies to (marked rows, else cursor).
+;; Operation-log rows are display-only: an op id is not a revision (a hex op id
+;; could even resolve as a commit-id prefix), so they never become operands.
 (define (action-revs state)
-  (resolve-revs (current-rows state) (action-indices state)))
+  (filter (lambda (s) (not (eq? (hash-ref s 'kind) 'operations)))
+    (resolve-revs (current-rows state) (action-indices state))))
 
 (define (first-rev revs) (hash-ref (car revs) 'rev))
 
@@ -390,6 +486,32 @@
 (define (do-rebase-onto! state-box)
   (do-rev-op! state-box 'rebase "rebase onto"
     (lambda (b revs) (backend-rebase b (hash 'onto (first-rev revs))))))
+
+;; i opens the interactive rebase editor over the commits from the selected one
+;; up to the tip. The editor floats above the status view; on confirm we apply
+;; the plan and reload the status view underneath.
+(define (do-rebase-interactive! state-box)
+  (let* ([state (unbox state-box)]
+         [backend (view-state-backend state)])
+    (cond
+      [(not (backend-supports? backend 'rebase-interactive))
+        (set-msg! state (unsupported-message backend 'rebase-interactive) 'error)]
+      [else
+        (let ([revs (action-revs state)])
+          (if (null? revs)
+            (set-msg! state "juju: select a commit to rebase from" 'error)
+            (open-rebase-from state-box backend (first-rev revs))))])))
+
+(define (open-rebase-from state-box backend rev)
+  (let* ([range (backend-query backend 'rebase-range (list (hash 'from rev)))]
+         [commits (hash-ref range 'commits)]
+         [base (hash-ref range 'base)])
+    (if (null? commits)
+      (set-msg! (unbox state-box) "juju: no commits to rebase from here" 'error)
+      (open-rebase-view (make-todo commits)
+        (lambda (entries)
+          (reload-and-report! state-box
+            (backend-rebase-interactive backend (hash 'entries entries 'base base))))))))
 
 (define (do-switch! state-box)
   (do-rev-op! state-box 'switch "switch to"
@@ -478,32 +600,6 @@
           (commit-show-lines shown)))
       (set-msg! state "juju: nothing to show for this row" 'info))))
 
-;; Render a backend-show result (commit metadata + parsed hunks) as plain lines
-;; the text view can colour by leading character.
-(define (commit-show-lines shown)
-  (let ([commit (hash-ref shown 'commit)]
-        [hunks (hash-ref shown 'hunks)])
-    (append
-      (if commit
-        (list
-          (string-append "commit " (commit-record-id commit))
-          (string-append "Author: " (commit-record-author commit))
-          (string-append "Date:   " (commit-record-date commit))
-          ""
-          (string-append "    " (commit-record-subject commit))
-          "")
-        '())
-      (apply append
-        (map (lambda (h) (cons (hunk-header h) (map diff-line->display (hunk-lines h)))) hunks)))))
-
-(define (diff-line->display dl)
-  (let ([k (diff-line-kind dl)] [t (diff-line-text dl)])
-    (cond
-      [(eq? k 'add) (string-append "+" t)]
-      [(eq? k 'del) (string-append "-" t)]
-      [(eq? k 'meta) t]
-      [else (string-append " " t)])))
-
 ;;; Rendering ;;;
 
 (define (render-view state-box rect buffer)
@@ -545,7 +641,7 @@
         (string-append (number->string n) " marked  "
           "s stage  u unstage  x discard/drop/abandon  c commit  v unmark  q quit")]
       [else
-        "s stage  u unstage  x del  c commit  V revert  b switch  z undo  v mark  ? keys"])))
+        "s stage  u unstage  x del  c commit  V revert  b switch  / search  v mark  ? keys"])))
 
 ;; A one-screen key reference, shown on `?`.
 (define (help-lines)
@@ -553,6 +649,8 @@
     "juju status - keys"
     ""
     "Movement:  j/k up/down   C-u/C-d page   Home/End ends"
+    "Sections:  } next   { previous   ^ enclosing section"
+    "Search:    / search   n next match   N previous match"
     "Folding:   Tab toggle fold   Enter visit file / toggle"
     "Select:    v mark/unmark row (acts on marks, else cursor)"
     ""
@@ -563,6 +661,7 @@
     ""
     "On a commit (recent/bookmarks/...):"
     "           Enter show   V revert   y cherry-pick   r rebase onto"
+    "           i rebase interactively from here"
     "           b switch   B set bookmark here   p stash pop"
     "           z undo   Z redo"
     ""
@@ -586,10 +685,20 @@
       [(or (key-event-down? event) (char-is? event #\j))
         (move-cursor! state 1)
         event-result/consume]
-      [(ctrl-char? event #\u) (move-cursor! state -8) event-result/consume]
-      [(ctrl-char? event #\d) (move-cursor! state 8) event-result/consume]
+      [(ctrl-char? event #\u) (page-cursor! state -8) event-result/consume]
+      [(ctrl-char? event #\d) (page-cursor! state 8) event-result/consume]
       [(key-event-home? event) (cursor-to-edge! state 'top) event-result/consume]
       [(key-event-end? event) (cursor-to-edge! state 'bottom) event-result/consume]
+
+      ;; Section navigation: }/{ next/prev sibling, ^ enclosing section.
+      [(char-is? event #\}) (cursor-to-section! state 'next) event-result/consume]
+      [(char-is? event #\{) (cursor-to-section! state 'prev) event-result/consume]
+      [(char-is? event #\^) (cursor-to-section! state 'parent) event-result/consume]
+
+      ;; In-buffer search: / prompt, n/N cycle matches.
+      [(char-is? event #\/) (start-search! state-box) event-result/consume]
+      [(char-is? event #\n) (search-step! state 1) event-result/consume]
+      [(char-is? event #\N) (search-step! state -1) event-result/consume]
 
       [(key-event-tab? event)
         (clear-message! state)
@@ -628,6 +737,7 @@
       [(char-is? event #\V) (do-revert! state-box) event-result/consume]
       [(char-is? event #\y) (do-cherry-pick! state-box) event-result/consume]
       [(char-is? event #\r) (do-rebase-onto! state-box) event-result/consume]
+      [(char-is? event #\i) (do-rebase-interactive! state-box) event-result/consume]
       [(char-is? event #\b) (do-switch! state-box) event-result/consume]
       [(char-is? event #\B) (do-set-bookmark! state-box) event-result/consume]
       [(char-is? event #\p) (do-stash-pop! state-box) event-result/consume]

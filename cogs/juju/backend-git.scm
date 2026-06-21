@@ -18,10 +18,12 @@
 (require "string-utils.scm")
 (require "backend-interface.scm")
 (require "config.scm")
+(require "rebase-todo.scm")
 
 (provide make-git-backend
   parse-porcelain-status ; exported for unit tests
-  parse-stash-line)
+  parse-stash-line
+  parse-git-blame-porcelain)
 
 ;; Features the Git model supports. No 'redo/'squash/'split/'abandon/'describe/
 ;; 'oplog: those are jj-only (git's squash is interactive rebase, not a single
@@ -40,12 +42,17 @@
     push
     pull
     fetch
+    fetch-prune
+    pull-rebase
+    commit-no-verify
+    commit-signoff
     stash
     branch
     switch
     set-upstream
     reset
     rebase
+    rebase-interactive
     autosquash
     force-push
     cherry-pick
@@ -69,9 +76,19 @@
          [ahead (hash-ref branch 'ahead)]
          [behind (hash-ref branch 'behind)]
          [head-subject (git-head-subject root)]
-         [header (build-git-header head-name head-subject upstream ahead behind)]
+         [header (git-header-with-rebase root
+                  (build-git-header head-name head-subject upstream ahead behind))]
          [sections (build-git-sections root parsed upstream ahead behind)])
     (make-status header sections)))
+
+;; Surface a paused interactive rebase in the status header so the user sees they
+;; are mid-rebase and how to drive it. The continue/abort/skip commands are
+;; typed (no status-view key is repurposed mid-rebase).
+(define (git-header-with-rebase root header)
+  (if (rebase-in-progress? root)
+    (append header
+      (list (cons "Rebase" "paused - :juju-rebase-continue / -abort / -skip")))
+    header))
 
 ;; Subject line of HEAD, or "" on an unborn/empty repo.
 (define (git-head-subject root)
@@ -366,18 +383,56 @@
     (hash 'commit commit 'hunks hunks)))
 
 ;;; Blame ;;;
+;;;
+;;; Served through the 'blame query op (git-blame-at), not a named interface
+;;; field: the view drives blame via backend-query.
 
-(define (git-blame b file line-range)
-  (let* ([root (backend-root b)]
-         [args (append (list "blame")
-                (if line-range
-                  (list "-L" (string-append (number->string (car line-range))
-                              ","
-                              (number->string (cdr line-range))))
-                  '())
-                (list "--" file))]
+;;@doc
+;; Parse `git blame --porcelain` output into blame-line records. Porcelain
+;; interleaves an entry header `<sha> <orig> <final> [<n>]` (the sha header
+;; repeats for every line; author/committer metadata appears only on a sha's
+;; first entry), metadata lines, and the content line prefixed with a tab.
+;; Only headers and content lines matter here; metadata is skipped.
+(define (parse-git-blame-porcelain text)
+  (let loop ([lines (split-lines text)] [sha #f] [orig 0] [acc '()])
+    (if (null? lines)
+      (reverse acc)
+      (let ([line (car lines)])
+        (cond
+          [(string-prefix? "\t" line)
+            (loop (cdr lines) sha orig
+              (if sha
+                (cons (make-blame-line sha (string-take sha 8) orig (string-drop line 1)) acc)
+                acc))]
+          [else
+            (let ([header (parse-blame-header line)])
+              (if header
+                (loop (cdr lines) (car header) (cdr header) acc)
+                (loop (cdr lines) sha orig acc)))])))))
+
+;; (sha . orig-line) when `line` is a porcelain entry header, else #f. An entry
+;; header's first token is the bare 40-char sha; no metadata line starts with
+;; one ("previous"/"filename"/"author" etc. lead with their keyword).
+(define (parse-blame-header line)
+  (let ([parts (split-many line " ")])
+    (if (and (>= (length parts) 3)
+         (= (string-length (car parts)) 40))
+      (let ([orig (string->number (cadr parts))])
+        (if orig (cons (car parts) orig) #f))
+      #f)))
+
+;; The 'blame query. `spec` is (hash 'file f 'rev r 'before before?): `rev` #f
+;; blames the working tree; `before?` #t blames at the parent of `rev`. The `^`
+;; parent suffix stays here so the view never forms a git-specific rev. '()
+;; when blame fails (a root commit's parent, a path absent at that rev).
+(define (git-blame-at root spec)
+  (let* ([file (hash-ref spec 'file)]
+         [rev (opt spec 'rev #f)]
+         [before? (opt spec 'before #f)]
+         [rev-args (if rev (list (if before? (string-append rev "^") rev)) '())]
+         [args (append (list "blame" "--porcelain") rev-args (list "--" file))]
          [res (run-vcs root "git" args)])
-    (if (vcs-ok? res) (split-lines (vcs-stdout res)) '())))
+    (if (vcs-ok? res) (parse-git-blame-porcelain (vcs-stdout res)) '())))
 
 ;;; Mutations ;;;
 ;;;
@@ -408,6 +463,10 @@
       [(eq? op 'pull) (git-network root "pull" (car args))]
       [(eq? op 'push) (git-network root "push" (car args))]
       [(eq? op 'rebase) (git-rebase root (car args))]
+      [(eq? op 'rebase-interactive) (git-rebase-interactive root (car args))]
+      [(eq? op 'rebase-continue) (git-rebase-step root "--continue" "Continued rebase")]
+      [(eq? op 'rebase-abort) (git-rebase-step root "--abort" "Aborted rebase")]
+      [(eq? op 'rebase-skip) (git-rebase-step root "--skip" "Skipped commit")]
       [(eq? op 'cherry-pick) (git-cherry-pick root (car args))]
       [(eq? op 'revert) (git-revert root (car args))]
       [(eq? op 'reset) (git-reset root (car args) (cadr args))]
@@ -466,12 +525,14 @@
       [(eq? op 'discard) (git-discard-file root path kind code)]
       [else (unsupported-result op)])))
 
-;; Discard reverts a file to its committed state. Untracked files are removed
-;; outright; a staged-only new file is dropped from the index and disk; anything
-;; else is restored from HEAD (clearing both index and worktree changes).
+;; Discard reverts a file to its committed state. Untracked entries are removed
+;; outright (-d because porcelain lists an untracked directory as one `dir/`
+;; entry, which clean skips without it); a staged-only new file is dropped from
+;; the index and disk; anything else is restored from HEAD (clearing both index
+;; and worktree changes).
 (define (git-discard-file root path kind code)
   (cond
-    [(eq? kind 'untracked) (git-run root (list "clean" "-f" "--" path))]
+    [(eq? kind 'untracked) (git-run root (list "clean" "-f" "-d" "--" path))]
     [(eq? code 'added) (git-run root (list "rm" "-f" "--" path))]
     [else (git-run root (list "checkout" "HEAD" "--" path))]))
 
@@ -486,18 +547,25 @@
 ;;   unstage  reverse-apply the staged diff in the index     (--cached --reverse)
 ;;   discard  reverse-apply the unstaged diff to the worktree (--reverse)
 (define (git-lines-op root spec op)
-  (let* ([path (hash-ref spec 'path)]
-         [src-args (cond
-                    [(eq? op 'unstage) (list "diff" "--cached" "--" path)]
-                    [else (list "diff" "--" path)])]
-         [raw (vcs-stdout (run-vcs root "git" src-args))]
-         [flags (parse-diff-flags raw)])
-    (cond
-      [(hash-ref flags 'binary?)
-        (err-result (string-append "cannot partial-stage binary file: " path) #f)]
-      [(hash-ref flags 'rename?)
-        (err-result (string-append "cannot partial-stage renamed file: " path) #f)]
-      [else (git-apply-patch root path (hash-ref spec 'lines) raw op)])))
+  (if (eq? (hash-ref spec 'section-kind) 'untracked)
+    ;; An untracked file's displayed diff is synthetic (--no-index); the real
+    ;; `git diff` sees nothing, so a line selection can never apply.
+    (err-result (string-append "cannot partial-stage untracked file: "
+                 (hash-ref spec 'path)
+                 " (stage the whole file)")
+      #f)
+    (let* ([path (hash-ref spec 'path)]
+           [src-args (cond
+                      [(eq? op 'unstage) (list "diff" "--cached" "--" path)]
+                      [else (list "diff" "--" path)])]
+           [raw (vcs-stdout (run-vcs root "git" src-args))]
+           [flags (parse-diff-flags raw)])
+      (cond
+        [(hash-ref flags 'binary?)
+          (err-result (string-append "cannot partial-stage binary file: " path) #f)]
+        [(hash-ref flags 'rename?)
+          (err-result (string-append "cannot partial-stage renamed file: " path) #f)]
+        [else (git-apply-patch root path (hash-ref spec 'lines) raw op)]))))
 
 (define (git-apply-patch root path lines-map raw op)
   (let* ([headers (diff-header-lines raw)]
@@ -527,7 +595,9 @@
 (define (git-commit root message opts)
   (if (blank? message)
     (err-result "commit aborted: empty message" #f)
-    (let ([res (run-vcs-input root "git" (list "commit" "-F" "-") message)])
+    (let ([res (run-vcs-input root "git"
+                (append (list "commit") (commit-flags opts) (list "-F" "-"))
+                message)])
       (if (vcs-ok? res)
         (ok-result "Committed" res)
         (err-result (string-append "git commit failed: " (result-tail res)) res)))))
@@ -536,11 +606,20 @@
 ;; message (--no-edit), so amend can be used purely to fold in staged changes.
 (define (git-amend root message opts)
   (let ([res (if (blank? message)
-              (run-vcs root "git" (list "commit" "--amend" "--no-edit"))
-              (run-vcs-input root "git" (list "commit" "--amend" "-F" "-") message))])
+              (run-vcs root "git" (append (list "commit" "--amend" "--no-edit") (commit-flags opts)))
+              (run-vcs-input root "git"
+                (append (list "commit" "--amend") (commit-flags opts) (list "-F" "-"))
+                message))])
     (if (vcs-ok? res)
       (ok-result "Amended HEAD" res)
       (err-result (string-append "git amend failed: " (result-tail res)) res))))
+
+;; Optional commit/amend flags read from opts: --no-verify (skip hooks) and
+;; --signoff. Both git-only; jj leaves the capabilities off so they never set.
+(define (commit-flags opts)
+  (append
+    (if (opt opts 'no-verify #f) (list "--no-verify") '())
+    (if (opt opts 'signoff #f) (list "--signoff") '())))
 
 ;; Record a `fixup!` commit targeting `rev`, to be squashed in a later
 ;; autosquash rebase.
@@ -561,14 +640,21 @@
 
 ;;; Network ;;;
 ;;;
-;;; opts is a hash that may carry 'remote (string) and 'force (#t for push). The
-;;; remote, when omitted, lets git use its configured default.
+;;; opts is a hash that may carry 'remote (string), 'force (#t, push only),
+;;; 'prune (#t, fetch only), and 'rebase (#t, pull only). The remote, when
+;;; omitted, lets git use its configured default. Each flag is gated on its
+;;; subcommand so a switch carried over from the shared remote menu is inert
+;;; where it does not apply.
 
 (define (git-network root subcmd opts)
   (let* ([remote (opt opts 'remote #f)]
          [force (opt opts 'force #f)]
+         [prune (opt opts 'prune #f)]
+         [rebase (opt opts 'rebase #f)]
          [args (append (list subcmd)
-                (if force (list "--force-with-lease") '())
+                (if (and force (string=? subcmd "push")) (list "--force-with-lease") '())
+                (if (and prune (string=? subcmd "fetch")) (list "--prune") '())
+                (if (and rebase (string=? subcmd "pull")) (list "--rebase") '())
                 (if remote (list remote) '()))]
          [res (run-vcs root "git" args)])
     (if (vcs-ok? res)
@@ -603,6 +689,114 @@
                    (list "-c" "sequence.editor=true" "rebase" "-i" "--autosquash" onto)
                    (list "rebase" onto))])
         (git-run* root args (string-append "Rebased onto " onto))))))
+
+;;; Interactive rebase ;;;
+;;;
+;;; The todo editor builds a backend-neutral plan; here it becomes a git rebase
+;;; todo. We write the projected todo to a file inside the git dir and point
+;;; git's own `sequence.editor` at a `cp` that overwrites the todo git presents
+;;; with ours - the no-tty equivalent of editing the todo by hand (the same
+;;; `-c sequence.editor=...` lever `--autosquash` uses). With GIT_EDITOR forced
+;;; to true (process.scm), pick/reorder/drop/squash/fixup complete in one shot;
+;;; an `edit` entry or a conflict leaves the rebase paused, which we detect and
+;;; report so the status view can drive continue/abort.
+
+(define (git-rebase-interactive root plan)
+  (let ([entries (hash-ref plan 'entries)]
+        [base (hash-ref plan 'base)])
+    (cond
+      [(blank? base) (err-result "interactive rebase needs a base revision" #f)]
+      [(null? entries) (err-result "interactive rebase: nothing to do" #f)]
+      [else
+        (let ([invalid (todo-validate entries)])
+          (if invalid
+            (err-result (string-append "invalid rebase plan: " invalid) #f)
+            (git-run-rebase-todo root base entries)))])))
+
+;; Write the projected todo and run `rebase -i`, pointing git's sequence editor
+;; at a `cp` of our todo. Reword entries also need new commit messages fed to
+;; GIT_EDITOR; with none, the forced GIT_EDITOR=true handles squash/fixup.
+(define (git-run-rebase-todo root base entries)
+  (let* ([gd (git-dir root)]
+         [todo-path (string-append gd "/juju-rebase-todo")]
+         ;; The editor value is a shell command, so the path is quoted to
+         ;; survive spaces (paths containing double quotes stay unsupported).
+         [seq-editor (string-append "sequence.editor=cp \"" todo-path "\"")]
+         [messages (todo-reword-messages entries)])
+    (write-file! todo-path (string-append (string-join (todo->git-lines entries) "\n") "\n"))
+    (if (null? messages)
+      (git-rebase-result root
+        (run-vcs root "git" (list "-c" seq-editor "rebase" "-i" base))
+        "Rebase complete")
+      (git-rebase-with-rewords root base seq-editor gd messages))))
+
+;; Feed reword messages through GIT_EDITOR. git invokes the editor once per
+;; reword (and per squash group); a small helper reads the file git hands it,
+;; leaves squash/fixup combination messages untouched (they carry git's banner),
+;; and overwrites a reword's message with the next pre-collected one in order.
+(define (git-rebase-with-rewords root base seq-editor gd messages)
+  (let ([script (string-append gd "/juju-reword.sh")]
+        [counter (string-append gd "/juju-reword-counter")])
+    (write-reword-messages! gd messages)
+    (write-file! counter "0\n")
+    (write-file! script (reword-script gd))
+    (git-rebase-result root
+      (run-vcs-env root "git" (list "-c" seq-editor "rebase" "-i" base)
+        (hash "GIT_EDITOR" (string-append "sh \"" script "\"")))
+      "Rebase complete (reworded)")))
+
+(define (write-reword-messages! gd messages)
+  (let loop ([ms messages] [i 0])
+    (when (pair? ms)
+      (write-file! (string-append gd "/juju-reword-msg-" (number->string i))
+        (string-append (car ms) "\n"))
+      (loop (cdr ms) (+ i 1)))))
+
+;; POSIX sh: skip the squash banner, else cp the next message over git's file and
+;; bump the counter. `sh <script>` runs it without needing the execute bit.
+(define (reword-script gd)
+  (string-append
+    "#!/bin/sh\n"
+    "f=\"$1\"\n"
+    "if head -n 1 \"$f\" | grep -q '^# This is a combination of'; then exit 0; fi\n"
+    "d='"
+    gd
+    "'\n"
+    "i=$(cat \"$d/juju-reword-counter\")\n"
+    "m=\"$d/juju-reword-msg-$i\"\n"
+    "if [ -f \"$m\" ]; then cp \"$m\" \"$f\"; echo $((i + 1)) > \"$d/juju-reword-counter\"; fi\n"))
+
+;; Map a rebase invocation to a result, distinguishing the paused state (an
+;; `edit` stop or an unresolved conflict, both leaving the rebase dir behind)
+;; from a clean finish and from an outright failure.
+(define (git-rebase-result root res success-msg)
+  (cond
+    [(rebase-in-progress? root)
+      (ok-result "Rebase paused (resolve, then continue/abort)" res)]
+    [(vcs-ok? res) (ok-result success-msg res)]
+    [else (err-result (string-append "git rebase failed: " (result-tail res)) res)]))
+
+(define (git-rebase-step root flag success-msg)
+  (if (rebase-in-progress? root)
+    (git-rebase-result root (run-vcs root "git" (list "rebase" flag)) success-msg)
+    (err-result "no rebase in progress" #f)))
+
+;;@doc #t when a git rebase is mid-flight (merge or apply backend dir present).
+(define (rebase-in-progress? root)
+  (let ([gd (git-dir root)])
+    (or (path-exists? (string-append gd "/rebase-merge"))
+      (path-exists? (string-append gd "/rebase-apply")))))
+
+;; Absolute git dir for `root` (handles worktrees, where .git is a file); falls
+;; back to <root>/.git if the query fails.
+(define (git-dir root)
+  (let ([res (run-vcs root "git" (list "rev-parse" "--absolute-git-dir"))])
+    (if (vcs-ok? res) (string-trim (vcs-stdout res)) (string-append root "/.git"))))
+
+(define (write-file! path text)
+  (let ([port (open-output-file path)])
+    (display text port)
+    (close-output-port port)))
 
 (define (git-cherry-pick root rev)
   (if (blank? rev)
@@ -704,7 +898,38 @@
         (run-vcs-lines root "git" (list "reflog" (string-append "-n" (number->string (juju-recent-count)))))]
       [(eq? op 'worktrees) (run-vcs-lines root "git" (list "worktree" "list"))]
       [(eq? op 'submodules) (run-vcs-lines root "git" (list "submodule" "status"))]
+      [(eq? op 'rebase-range) (git-rebase-range root (car args))]
+      [(eq? op 'blame) (git-blame-at root (car args))]
       [else '()]))) ; 'oplog has no git analogue
+
+;; The commit range for the interactive rebase editor, as a hash:
+;;   'base    the exclusive base to pass to `git rebase -i` (string or #f)
+;;   'commits the commits base..HEAD, newest first (commit-record list)
+;; `spec` carries 'from (edit from this commit inclusive -> base is its parent)
+;; or 'base (an explicit exclusive base); with neither it defaults to the
+;; upstream. The whole range/parent syntax stays here so command code is neutral.
+(define (git-rebase-range root spec)
+  (let* ([from (opt spec 'from #f)]
+         [given (opt spec 'base #f)]
+         [base (cond
+                [from (string-append from "^")]
+                [given given]
+                [else (git-default-rebase-base root)])])
+    (if (not base)
+      (hash 'base #f 'commits '())
+      (hash 'base base
+        'commits
+        (git-log* root (string-append base "..HEAD") (hash 'limit 200))))))
+
+;; The tracked upstream's short name (e.g. "origin/main"), or #f when HEAD has no
+;; upstream - in which case the editor asks the user for an explicit base.
+(define (git-default-rebase-base root)
+  (let ([res (run-vcs root "git"
+              (list "rev-parse" "--abbrev-ref" "--symbolic-full-name" "@{upstream}"))])
+    (if (vcs-ok? res)
+      (let ([name (string-trim (vcs-stdout res))])
+        (if (string=? name "") #f name))
+      #f)))
 
 ;; Local branches, then tags, then remote-tracking branches, each as one line.
 (define (git-refs root)
@@ -727,6 +952,5 @@
     git-diff
     git-log
     git-show
-    git-blame
     git-mutate
     git-query))

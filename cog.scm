@@ -16,7 +16,7 @@
 ;;;   (require "juju/juju.scm")
 ;;;
 ;;; Forge copies this directory to ~/.steel/cogs/juju/.
-;
+
 (define package-name 'juju)
-(define version "0.1.0-alpha")
+(define version "0.2.0-alpha")
 (define dependencies '())

@@ -59,6 +59,18 @@
     (set-menu-state-switches! state
       (hash-insert sw flag (not (hash-ref sw flag))))))
 
+(define (set-arg! state flag value)
+  (set-menu-state-switches! state
+    (hash-insert (menu-state-switches state) flag value)))
+
+;; Prompt for an arg entry's value and store it, leaving the menu open. The
+;; menu state-struct is shared with the box render reads, so the new value
+;; shows on the next frame.
+(define (prompt-arg! state entry)
+  (push-component!
+    (prompt (string-append (hash-ref entry 'label) ": ")
+      (lambda (input) (set-arg! state (hash-ref entry 'flag) (or input ""))))))
+
 (define (handle-menu state-box event)
   (let ([state (unbox state-box)])
     (cond
@@ -70,6 +82,9 @@
             [(not e) event-result/consume]
             [(eq? (hash-ref e 'kind) 'switch)
               (toggle-switch! state (hash-ref e 'flag))
+              event-result/consume]
+            [(eq? (hash-ref e 'kind) 'arg)
+              (prompt-arg! state e)
               event-result/consume]
             [else ; action: close, then run with the current switch state
               (let ([thunk (hash-ref e 'action)]

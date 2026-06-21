@@ -22,10 +22,12 @@
 (require "string-utils.scm")
 (require "backend-interface.scm")
 (require "config.scm")
+(require "rebase-todo.scm")
 
 (provide make-jj-backend
   parse-jj-summary ; exported for unit tests
-  parse-jj-conflict-line)
+  parse-jj-conflict-line
+  parse-jj-annotate)
 
 ;; Features the jj model supports. No 'stage/'unstage/'stash: jj has no index.
 ;; 'redo/'split/'abandon/'oplog/'describe are jj-only and have no Git analogue.
@@ -45,6 +47,7 @@
     abandon
     describe
     rebase
+    rebase-interactive
     revert
     undo
     redo))
@@ -75,6 +78,16 @@
     " ++ \"\\x1f\" ++ if(normal_target, normal_target.commit_id().short(), \"\")"
     " ++ \"\\x1f\" ++ if(normal_target, normal_target.description().first_line(), \"\")"
     " ++ \"\\x1e\""))
+
+;; One annotation record per output line: the change id, its short prefix, the
+;; line's number in the originating change, then the content (which carries the
+;; terminating newline, so lines double as records).
+(define JJ-ANNOTATE-TEMPLATE
+  (string-append
+    "commit.change_id()"
+    " ++ \"\\x1f\" ++ commit.change_id().shortest(8)"
+    " ++ \"\\x1f\" ++ original_line_number"
+    " ++ \"\\x1f\" ++ content"))
 
 ;;; Status ;;;
 
@@ -162,17 +175,69 @@
     (parse-jj-summary lines)))
 
 ;;@doc
-;; Parse `jj diff --summary` lines ("M path", "A path", "D path", "R old new")
-;; into file-items. Pure.
+;; Parse `jj diff --summary` lines ("M path", "A path", "D path",
+;; "R {old => new}" / "C {old => new}" - the rename segment may also sit
+;; mid-path, "dir/{a => b}/f.txt") into file-items. A rename/copy resolves to
+;; the new path, with the old path under 'orig-path so the view labels it and
+;; path-taking operations receive a real file. Pure.
 (define (parse-jj-summary lines)
   (filter (lambda (x) x)
     (map (lambda (line)
           (if (< (string-length line) 2)
             #f
-            (let ([code (string-ref line 0)]
-                  [path (string-trim (string-drop line 1))])
-              (make-file-item path (jj-code->status code) #f #f (hash)))))
+            (let* ([code (string-ref line 0)]
+                   [resolved (jj-resolve-rename-path (string-trim (string-drop line 1)))]
+                   [path (car resolved)]
+                   [orig (cdr resolved)])
+              (make-file-item path (jj-code->status code) #f #f
+                (if orig (hash 'orig-path orig 'rename? #t) (hash))))))
       lines)))
+
+;; Resolve a summary path that may carry `{old => new}` rename segments, whole
+;; ("{a.txt => b.txt}") or mid-path ("dir/{a => b}/f.txt"). Returns
+;; (cons new-path old-path); old-path is #f when there is no rename segment.
+;; An empty side ("dir/{ => sub}/f") drops out of its path; the doubled
+;; separator it leaves is collapsed. Braces without a " => " inside are treated
+;; as literal path text.
+(define (jj-resolve-rename-path s)
+  (let loop ([rest s] [new-acc ""] [old-acc ""] [found #f])
+    (let ([open (jj-index-of rest "{" 0)]
+          [finish (lambda (tail)
+                   (if found
+                     (cons (collapse-slashes (string-append new-acc tail))
+                       (collapse-slashes (string-append old-acc tail)))
+                     (cons s #f)))])
+      (if (not open)
+        (finish rest)
+        (let* ([after-open (string-drop rest (+ open 1))]
+               [close (jj-index-of after-open "}" 0)]
+               [inner (if close (substring after-open 0 close) "")]
+               [arrow (and close (jj-index-of inner " => " 0))])
+          (if (not arrow)
+            (finish rest)
+            (loop (string-drop after-open (+ close 1))
+              (string-append new-acc (substring rest 0 open)
+                (string-drop inner (+ arrow 4)))
+              (string-append old-acc (substring rest 0 open)
+                (substring inner 0 arrow))
+              #t)))))))
+
+;; Index of the first occurrence of `needle` in `s` at or after `from`, or #f.
+(define (jj-index-of s needle from)
+  (let ([sl (string-length s)] [nl (string-length needle)])
+    (let loop ([i from])
+      (cond
+        [(> (+ i nl) sl) #f]
+        [(string=? (substring s i (+ i nl)) needle) i]
+        [else (loop (+ i 1))]))))
+
+;; "a//b" -> "a/b": what an empty rename-segment side leaves behind.
+(define (collapse-slashes s)
+  (let loop ([cs (string->list s)] [acc '()] [prev-slash #f])
+    (cond
+      [(null? cs) (list->string (reverse acc))]
+      [(and prev-slash (char=? (car cs) #\/)) (loop (cdr cs) acc #t)]
+      [else (loop (cdr cs) (cons (car cs) acc) (char=? (car cs) #\/))])))
 
 (define (jj-code->status c)
   (cond
@@ -280,11 +345,47 @@
     (hash 'commit commit 'hunks hunks)))
 
 ;;; Blame ;;;
+;;;
+;;; Served through the 'blame query op (jj-blame-at), not a named interface
+;;; field: the view drives blame via backend-query.
 
-(define (jj-blame b file line-range)
-  (let* ([root (backend-root b)]
-         [res (run-vcs root "jj" (list "file" "annotate" file))])
-    (if (vcs-ok? res) (split-lines (vcs-stdout res)) '())))
+;;@doc
+;; Parse `jj file annotate -T JJ-ANNOTATE-TEMPLATE` output into blame-line
+;; records: one line per record, fields unit-separated. Stray 0x1f bytes in the
+;; content itself are joined back into the text.
+(define (parse-jj-annotate text)
+  (filter-map parse-jj-annotate-line (split-lines text)))
+
+(define (parse-jj-annotate-line line)
+  (let ([fields (field-split line)])
+    (if (>= (length fields) 4)
+      (make-blame-line (list-ref fields 0)
+        (list-ref fields 1)
+        (let ([n (string->number (list-ref fields 2))]) (if n n 0))
+        (rejoin-fields (cdr (cdr (cdr fields)))))
+      #f)))
+
+(define (rejoin-fields fields)
+  (let loop ([fs (cdr fields)] [acc (car fields)])
+    (if (null? fs)
+      acc
+      (loop (cdr fs) (string-append acc (string (integer->char 31)) (car fs))))))
+
+;; The 'blame query (see the git counterpart for the spec shape). jj resolves
+;; path arguments against the process cwd, and `file annotate` takes a plain
+;; path rather than a fileset, so the repo-relative path is anchored as an
+;; absolute one instead of the usual `root:"..."` wrap. `before?` uses the `-`
+;; parent suffix, kept here so the view never forms a jj-specific revset.
+(define (jj-blame-at root spec)
+  (let* ([file (hash-ref spec 'file)]
+         [rev (opt spec 'rev #f)]
+         [before? (opt spec 'before #f)]
+         [rev-args (if rev (list "-r" (if before? (string-append rev "-") rev)) '())]
+         [args (append (list "file" "annotate" "-T" JJ-ANNOTATE-TEMPLATE)
+                rev-args
+                (list (path-join root file)))]
+         [res (run-vcs root "jj" args)])
+    (if (vcs-ok? res) (parse-jj-annotate (vcs-stdout res)) '())))
 
 ;;; Mutations ;;;
 ;;;
@@ -319,6 +420,7 @@
       [(eq? op 'abandon) (jj-abandon root (car args))]
       [(eq? op 'describe) (jj-describe root (car args))]
       [(eq? op 'rebase) (jj-rebase root (car args))]
+      [(eq? op 'rebase-interactive) (jj-rebase-interactive root (car args))]
       [(eq? op 'revert) (jj-revert root (car args))]
       [(eq? op 'switch) (jj-switch root (car args))]
       [(eq? op 'branch-create) (jj-bookmark-create root (car args) (cadr args))]
@@ -444,6 +546,39 @@
       (jj-run* root (list "rebase" "-b" "@" "--onto" onto)
         (string-append "Rebased onto " onto)))))
 
+;;; Interactive rebase ;;;
+;;;
+;;; jj has no todo file: the same backend-neutral plan becomes an ordered
+;;; sequence of jj commands keyed on stable change-ids (see rebase-todo's
+;;; todo->jj-steps - folds, then drops, then rewords, then a relinearise into
+;;; plan order, then parking @ on the edit target). Steps run synchronously;
+;;; jj never pauses, so the first failure stops the run and reports it, and the
+;;; whole batch is reversible with `jj undo`. Reorder steps may run as no-ops
+;;; when the order is unchanged, which jj handles harmlessly.
+(define (jj-rebase-interactive root plan)
+  (let* ([entries (hash-ref plan 'entries)]
+         [invalid (todo-validate entries)])
+    (if invalid
+      (err-result (string-append "invalid rebase plan: " invalid) #f)
+      (jj-run-steps root (todo->jj-steps entries)))))
+
+(define (jj-run-steps root steps)
+  (if (null? steps)
+    (ok-result "Rebase: nothing to do" #f)
+    (let loop ([ss steps] [done 0] [last #f])
+      (if (null? ss)
+        (ok-result
+          (string-append "Rebased: " (number->string done)
+            (if (= done 1) " step" " steps")
+            " (jj undo to revert)")
+          last)
+        (let ([res (run-vcs root "jj" (car ss))])
+          (if (vcs-ok? res)
+            (loop (cdr ss) (+ done 1) res)
+            (err-result
+              (string-append "jj rebase step failed: " (result-tail res) " (jj undo to revert)")
+              res)))))))
+
 ;; Create a change that reverts `rev`, inserted after @ (so it lands on top of
 ;; the current work).
 (define (jj-revert root rev)
@@ -504,7 +639,23 @@
           (list "op" "log" "--no-graph" "-n" (number->string (juju-recent-count))))]
       ;; jj's workspaces are its worktree analogue; it has no submodules.
       [(eq? op 'worktrees) (run-vcs-lines root "jj" (list "workspace" "list"))]
+      [(eq? op 'rebase-range) (jj-rebase-range root (car args))]
+      [(eq? op 'blame) (jj-blame-at root (car args))]
       [else '()]))) ; 'reflog/'submodules have no jj analogue
+
+;; The commit range for the interactive rebase editor (see the git counterpart).
+;; jj edits by change-id, so 'base is informational only (the apply step ignores
+;; it); what matters is `commits`, newest first. `spec` carries 'from (edit from
+;; this change inclusive) or 'base (commits after this change); with neither it
+;; defaults to the mutable ancestors of @ (the commits jj will let us rewrite).
+(define (jj-rebase-range root spec)
+  (let* ([from (opt spec 'from #f)]
+         [given (opt spec 'base #f)]
+         [revset (cond
+                  [from (string-append "(" from "::@) & mutable()")]
+                  [given (string-append given "..@")]
+                  [else "::@ & mutable()"])])
+    (hash 'base given 'commits (jj-log* root revset (hash 'limit 200)))))
 
 ;;; Constructor (defined last; see backend-git for the Steel ordering note) ;;;
 
@@ -516,6 +667,5 @@
     jj-diff
     jj-log
     jj-show
-    jj-blame
     jj-mutate
     jj-query))

@@ -9,6 +9,7 @@
 
 (provide menu-info
   menu-switch
+  menu-arg
   menu-action
   menu-entry-key
   initial-switches
@@ -18,8 +19,9 @@
 ;;;
 ;;; An entry is a hash tagged by 'kind. info: a heading/blank line. switch: a
 ;;; toggle keyed by `key`, carrying the flag symbol it sets and its default.
-;;; action: a keyed command whose `action` is (lambda (switches) ...), switches
-;;; being a hash of flag-symbol -> bool.
+;;; arg: a value infix keyed by `key`, prompting for a string stored under its
+;;; flag. action: a keyed command whose `action` is (lambda (switches) ...),
+;;; switches being a hash of flag-symbol -> bool-or-string.
 
 ;;@doc A non-interactive heading/blank line in a menu.
 (define (menu-info text) (hash 'kind 'info 'text text))
@@ -29,6 +31,13 @@
 ;; initial value. `label` describes it.
 (define (menu-switch key flag label default)
   (hash 'kind 'switch 'key key 'flag flag 'label label 'default default))
+
+;;@doc
+;; A value infix: pressing `key` prompts for a value stored in the switch state
+;; under `flag` (a string). `default` is its initial value (a string, or #f for
+;; unset). `label` describes it, e.g. "-n count".
+(define (menu-arg key flag label default)
+  (hash 'kind 'arg 'key key 'flag flag 'label label 'default default))
 
 ;;@doc
 ;; An action: pressing `key` closes the menu and calls `thunk` with the current
@@ -41,13 +50,15 @@
   (if (eq? (hash-ref e 'kind) 'info) #f (hash-ref e 'key)))
 
 ;;@doc
-;; Initial switch state for `entries`: each switch flag mapped to its default.
+;; Initial switch state for `entries`: each switch/arg flag mapped to its
+;; default.
 (define (initial-switches entries)
   (foldl
     (lambda (e acc)
-      (if (eq? (hash-ref e 'kind) 'switch)
-        (hash-insert acc (hash-ref e 'flag) (hash-ref e 'default))
-        acc))
+      (let ([kind (hash-ref e 'kind)])
+        (if (or (eq? kind 'switch) (eq? kind 'arg))
+          (hash-insert acc (hash-ref e 'flag) (hash-ref e 'default))
+          acc)))
     (hash)
     entries))
 
@@ -72,6 +83,17 @@
                   (hash-ref e 'label))
                 'tag
                 (if on 'section 'file)))]
+          [(eq? kind 'arg)
+            (let* ([raw (and (hash-contains? switches (hash-ref e 'flag))
+                         (hash-ref switches (hash-ref e 'flag)))]
+                   [set? (and (string? raw) (not (string=? raw "")))])
+              (hash 'text
+                (string-append (key-cell (hash-ref e 'key))
+                  (hash-ref e 'label)
+                  ": "
+                  (if set? raw "(unset)"))
+                'tag
+                (if set? 'section 'file)))]
           [else ; action
             (hash 'text
               (string-append (key-cell (hash-ref e 'key)) (hash-ref e 'label))

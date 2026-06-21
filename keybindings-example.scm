@@ -8,8 +8,9 @@
 ;; keyboard-free typed-command equivalents that act on the current file, a rev
 ;; argument, or the workspace.
 ;;
-;; The `M` group opens transient popups (switches + actions) for the branch,
-;; rebase, and remote flows.
+;; The `M` group opens transient popups (switches + actions): `M M` is the
+;; top-level dispatch, and `M b`/`M r`/`M R`/`M c`/`M l` open the branch, rebase,
+;; remote, commit, and log transients.
 ;;
 ;; Commands that strictly require a typed argument are deliberately not bound: a
 ;; keybinding sends the whole command with no way to enter an argument, so type
@@ -38,6 +39,10 @@
             ;; history rewriting (capabilities differ by backend)
             (r
               (R ":juju-reset")
+              (i ":juju-rebase-interactive")
+              (c ":juju-rebase-continue")
+              (A ":juju-rebase-abort")
+              (k ":juju-rebase-skip")
               (s ":juju-squash")
               (p ":juju-split")
               (a ":juju-abandon")
@@ -56,9 +61,12 @@
               (d ":juju-stash-drop"))
             ;; transient menus (popup of switches + actions)
             (M
+              (M ":juju-dispatch")
               (b ":juju-branch-menu")
               (r ":juju-rebase-menu")
-              (R ":juju-remote-menu"))
+              (R ":juju-remote-menu")
+              (c ":juju-commit-menu")
+              (l ":juju-log-menu"))
             ;; extra listings
             (w ":juju-worktree")
             (W ":juju-submodule")
@@ -84,6 +92,10 @@
             ;; history rewriting (capabilities differ by backend)
             (r
               (R ":juju-reset")
+              (i ":juju-rebase-interactive")
+              (c ":juju-rebase-continue")
+              (A ":juju-rebase-abort")
+              (k ":juju-rebase-skip")
               (s ":juju-squash")
               (p ":juju-split")
               (a ":juju-abandon")
@@ -102,9 +114,12 @@
               (d ":juju-stash-drop"))
             ;; transient menus (popup of switches + actions)
             (M
+              (M ":juju-dispatch")
               (b ":juju-branch-menu")
               (r ":juju-rebase-menu")
-              (R ":juju-remote-menu"))
+              (R ":juju-remote-menu")
+              (c ":juju-commit-menu")
+              (l ":juju-log-menu"))
             ;; extra listings
             (w ":juju-worktree")
             (W ":juju-submodule")

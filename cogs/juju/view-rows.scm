@@ -30,7 +30,18 @@
   row-status-code
   row-hunk-index
   row-body-line-index
-  make-row)
+  make-row
+  ;; navigation and search (pure, over the flat row list)
+  section-row-indices
+  next-section-index
+  prev-section-index
+  parent-section-index
+  nearest-selectable-index
+  search-matches
+  ;; projections shared by the overlay views
+  blame-rows
+  commit-show-lines
+  diff-line->display)
 
 ;; A row is a hash. Helpers keep call sites readable.
 (define (make-row type tag text object section-kind selectable?)
@@ -223,3 +234,128 @@
   (if (null? refs)
     ""
     (string-append "  (" (string-join refs ", ") ")")))
+
+;;; Navigation and search ;;;
+;;;
+;;; Pure reads over the flat row list, the spine of the status view's
+;;; section-jump and in-buffer search. Indices are positions in the row list, so
+;;; the caller can drop the result straight into the cursor.
+
+;;@doc The indices of the section-header rows in `rows`.
+(define (section-row-indices rows)
+  (let loop ([rs rows] [i 0] [acc '()])
+    (cond
+      [(null? rs) (reverse acc)]
+      [(eq? (row-type (car rs)) 'section) (loop (cdr rs) (+ i 1) (cons i acc))]
+      [else (loop (cdr rs) (+ i 1) acc)])))
+
+;;@doc The nearest section-header index after `from`, or `from` when none (no wrap).
+(define (next-section-index rows from)
+  (let loop ([is (section-row-indices rows)])
+    (cond
+      [(null? is) from]
+      [(> (car is) from) (car is)]
+      [else (loop (cdr is))])))
+
+;;@doc The nearest section-header index before `from`, or `from` when none (no wrap).
+(define (prev-section-index rows from)
+  (let loop ([is (reverse (section-row-indices rows))])
+    (cond
+      [(null? is) from]
+      [(< (car is) from) (car is)]
+      [else (loop (cdr is))])))
+
+;;@doc
+;; The enclosing section-header index at or before `from` (so a file/diff row
+;; jumps up to its section). `from` itself when it precedes the first section.
+(define (parent-section-index rows from)
+  (let ([n (length rows)])
+    (let loop ([i (min from (- n 1))])
+      (cond
+        [(< i 0) from]
+        [(eq? (row-type (list-ref rows i)) 'section) i]
+        [else (loop (- i 1))]))))
+
+;;@doc
+;; Index of the nearest selectable row scanning from `from` (inclusive, clamped
+;; into range) in direction `dir` (+1/-1), falling back to the opposite
+;; direction, or #f when no row is selectable. Backs the status view's page
+;; movement, which must land on a selectable row even when the jump overshoots
+;; the list.
+(define (nearest-selectable-index rows from dir)
+  (let ([n (length rows)])
+    (if (= n 0)
+      #f
+      (let ([start (max 0 (min from (- n 1)))])
+        (let ([hit (scan-selectable rows start dir n)])
+          (if hit hit (scan-selectable rows start (- 0 dir) n)))))))
+
+(define (scan-selectable rows i dir n)
+  (cond
+    [(or (< i 0) (>= i n)) #f]
+    [(row-selectable? (list-ref rows i)) i]
+    [else (scan-selectable rows (+ i dir) dir n)]))
+
+;;@doc
+;; The indices of rows whose text contains `query`, case-insensitive. '() for a
+;; blank query.
+(define (search-matches rows query)
+  (if (or (not query) (string=? (string-trim query) ""))
+    '()
+    (let ([q (string-downcase query)])
+      (let loop ([rs rows] [i 0] [acc '()])
+        (cond
+          [(null? rs) (reverse acc)]
+          [(string-contains? (string-downcase (row-text (car rs))) q)
+            (loop (cdr rs) (+ i 1) (cons i acc))]
+          [else (loop (cdr rs) (+ i 1) acc)])))))
+
+;;; Blame rows ;;;
+
+;;@doc
+;; Project blame-line records into rows for the blame view: "<short-id> <text>",
+;; the first row of each commit run tagged 'commit so the run boundary carries
+;; the colour (the row grid styles whole rows), the rest 'file.
+(define (blame-rows lines)
+  (let loop ([ls lines] [prev #f] [acc '()])
+    (if (null? ls)
+      (reverse acc)
+      (let* ([bl (car ls)]
+             [commit (blame-line-commit bl)]
+             [tag (if (equal? commit prev) 'file 'commit)])
+        (loop (cdr ls) commit (cons (blame-row bl tag) acc))))))
+
+(define (blame-row bl tag)
+  (hash 'text
+    (string-append (pad-right (blame-line-short-id bl) 9) (blame-line-text bl))
+    'tag
+    tag))
+
+;;; Commit show projection ;;;
+
+;;@doc
+;; Render a backend-show result (commit metadata + parsed hunks) as plain lines
+;; the text view can colour by leading character.
+(define (commit-show-lines shown)
+  (let ([commit (hash-ref shown 'commit)]
+        [hunks (hash-ref shown 'hunks)])
+    (append
+      (if commit
+        (list
+          (string-append "commit " (commit-record-id commit))
+          (string-append "Author: " (commit-record-author commit))
+          (string-append "Date:   " (commit-record-date commit))
+          ""
+          (string-append "    " (commit-record-subject commit))
+          "")
+        '())
+      (apply append
+        (map (lambda (h) (cons (hunk-header h) (map diff-line->display (hunk-lines h)))) hunks)))))
+
+(define (diff-line->display dl)
+  (let ([k (diff-line-kind dl)] [t (diff-line-text dl)])
+    (cond
+      [(eq? k 'add) (string-append "+" t)]
+      [(eq? k 'del) (string-append "-" t)]
+      [(eq? k 'meta) t]
+      [else (string-append " " t)])))
