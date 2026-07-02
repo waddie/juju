@@ -38,7 +38,7 @@ Add the `require` line above to your `init.scm` and restart Helix.
 | Command                           | Action                                                                            |
 | --------------------------------- | --------------------------------------------------------------------------------- |
 | `:juju` / `:juju-status`          | Open the status view                                                              |
-| `:juju-log`                       | Recent commits / changes                                                          |
+| `:juju-log`                       | Recent commits / changes, with actions on the change under the cursor             |
 | `:juju-diff`                      | Working-copy diff                                                                 |
 | `:juju-blame`                     | Blame the current file interactively (show, chase revisions)                      |
 | `:juju-backend git\|jj`           | Set or report the backend for this workspace                                      |
@@ -69,6 +69,7 @@ Add the `require` line above to your `init.scm` and restart Helix.
 | `:juju-abandon [rev]`             | Abandon a change, `@` when omitted (`jj`)                                         |
 | `:juju-describe [msg]`            | Set `@`’s description (`jj`)                                                      |
 | `:juju-switch [target]`           | Switch to a branch/bookmark/commit                                                |
+| `:juju-edit [rev]`                | Edit a change: make it the working copy (`jj`)                                    |
 | `:juju-branch-create n`           | Create a branch/bookmark (optional rev)                                           |
 | `:juju-branch-rename`             | Rename a branch/bookmark: `<old> <new>`                                           |
 | `:juju-branch-delete n`           | Delete a branch/bookmark                                                          |
@@ -103,39 +104,62 @@ where the action applies to whatever is selected.
 
 ## Status-view keys
 
-| Key                  | Action                                                 |
-| -------------------- | ------------------------------------------------------ |
-| `j` / `k`, `↑` / `↓` | Move                                                   |
-| `Ctrl-d` / `Ctrl-u`  | Page down / up                                         |
-| `Home` / `End`       | First / last                                           |
-| `}` / `{`            | Next / previous section                                |
-| `^`                  | Jump to the enclosing section header                   |
-| `/`                  | Search; `n` / `N` jump to the next / previous match    |
-| `Tab`                | Fold / unfold the section or file under the cursor     |
-| `Enter`              | Visit a file / show a commit’s diff / fold a section   |
-| `v`                  | Mark / unmark the current row for a multi-row action   |
-| `s` / `u`            | Stage / unstage the selection                          |
-| `x`                  | Discard files / drop stash / abandon commit (confirms) |
-| `S` / `U`            | Stage all / unstage all                                |
-| `c` / `a` / `e`      | Commit / amend / extend                                |
-| `f` / `F` / `P`      | Fetch / pull / push                                    |
-| `V` / `y` / `r`      | Revert / cherry-pick / rebase-onto the selected commit |
-| `i`                  | Interactive rebase from the selected commit to the tip |
-| `b`                  | Switch to the selected branch/bookmark/commit          |
-| `p`                  | Pop the selected stash                                 |
-| `z` / `Z`            | Undo / redo (`jj op log`; `git reflog`, best-effort)   |
-| `?`                  | Key reference                                          |
-| `g`                  | Refresh                                                |
-| `q` / `Esc`          | Close                                                  |
+| Key                  | Action                                                    |
+| -------------------- | --------------------------------------------------------- |
+| `j` / `k`, `↑` / `↓` | Move                                                      |
+| `Ctrl-d` / `Ctrl-u`  | Page down / up                                            |
+| `Home` / `End`       | First / last                                              |
+| `}` / `{`            | Next / previous section                                   |
+| `^`                  | Jump to the enclosing section header                      |
+| `/`                  | Search; `n` / `N` jump to the next / previous match       |
+| `Tab`                | Fold / unfold the section or file under the cursor        |
+| `Enter`              | Visit a file / show a commit’s diff / fold a section      |
+| `v`                  | Mark / unmark the current row for a multi-row action      |
+| `s` / `u`            | Stage / unstage the selection                             |
+| `x`                  | Discard files / drop stash / abandon commit (confirms)    |
+| `S` / `U`            | Stage all / unstage all                                   |
+| `c` / `a` / `e`      | Commit / amend / extend (`e` on a commit row: edit, `jj`) |
+| `f` / `F` / `P`      | Fetch / pull / push                                       |
+| `V` / `y` / `r`      | Revert / cherry-pick / rebase-onto the selected commit    |
+| `i`                  | Interactive rebase from the selected commit to the tip    |
+| `b`                  | Switch to the selected branch/bookmark/commit             |
+| `p`                  | Pop the selected stash                                    |
+| `z` / `Z`            | Undo / redo (`jj op log`; `git reflog`, best-effort)      |
+| `?`                  | Key reference                                             |
+| `g`                  | Refresh                                                   |
+| `q` / `Esc`          | Close                                                     |
 
 Actions are selection-first: mark rows with `v` and the next action applies to
 all of them; with nothing marked, it applies to the row under the cursor. The
 granularity is whatever the selection covers, files, hunks, or individual diff
 lines, so there is no separate file-vs-hunk-vs-region distinction. The same key
 adapts to its operand: `x` discards file rows, drops a stash row, or abandons a
-commit row. History keys (`V` / `y` / `r` / `b`) act on commit rows in the
-recent, bookmark, and unpushed/unpulled sections. Keys for features a backend
-lacks (staging under `jj`, stash under `jj`) are inert.
+commit row, and `e` extends everywhere except on a commit row under `jj`, where
+it edits that change. History keys (`V` / `y` / `r` / `b`) act on commit rows in
+the recent, bookmark, and unpushed/unpulled sections. Keys for features a
+backend lacks (staging under `jj`, stash under `jj`) are inert.
+
+## Log view
+
+`:juju-log` (or `:juju-log-menu` for a `-n count` infix) opens a floating log of
+recent commits/changes. Each row is a commit, and the commit actions from the
+status view work on the row under the cursor.
+
+| Key                  | Action                                               |
+| -------------------- | ---------------------------------------------------- |
+| `j` / `k`, `↑` / `↓` | Move the cursor                                      |
+| `Ctrl-u` / `Ctrl-d`  | Move ten lines                                       |
+| `Enter`              | Show the commit's diff                               |
+| `e`                  | Edit: make the change the working copy (`jj`)        |
+| `n` / `b`            | New change on the commit (`jj new` / `git checkout`) |
+| `V` / `y` / `r`      | Revert / cherry-pick / rebase-onto the commit        |
+| `g`                  | Refresh                                              |
+| `?`                  | Key reference                                        |
+| `q` / `Esc`          | Quit                                                 |
+
+Mutations refresh the log in place (the cursor stays on the same change) and
+any open status view. `jj` refuses to edit an immutable commit; the error shows
+on the log's status line.
 
 ## Interactive rebase editor
 

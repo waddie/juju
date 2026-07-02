@@ -67,6 +67,7 @@
   juju-abandon
   juju-describe
   juju-switch
+  juju-edit
   juju-branch-create
   juju-branch-set
   juju-branch-rename
@@ -247,6 +248,10 @@
 ;;@doc
 ;; Switch to a branch/bookmark or commit: :juju-switch <target> (prompts if omitted).
 (define (juju-switch . args) (apply cmd.juju-switch args))
+
+;;@doc
+;; Edit a change, making it the working copy: :juju-edit <rev> (jj; prompts if omitted).
+(define (juju-edit . args) (apply cmd.juju-edit args))
 
 ;;@doc
 ;; Create a branch/bookmark: :juju-branch-create <name> [rev].

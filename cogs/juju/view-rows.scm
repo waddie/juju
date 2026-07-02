@@ -40,6 +40,7 @@
   search-matches
   ;; projections shared by the overlay views
   blame-rows
+  log-rows
   commit-show-lines
   diff-line->display)
 
@@ -330,6 +331,24 @@
     (string-append (pad-right (blame-line-short-id bl) 9) (blame-line-text bl))
     'tag
     tag))
+
+;;; Log rows ;;;
+
+;;@doc
+;; Project commit-records into rows for the log view: one selectable 'commit row
+;; per record, "<short-id> <date> <subject> (refs)", carrying the record as the
+;; object so the view can act on the change under the cursor.
+(define (log-rows commits)
+  (map (lambda (c) (make-row 'commit 'commit (log-line c) c 'log #t)) commits))
+
+(define (log-line c)
+  (string-append
+    (pad-right (commit-record-short-id c) 12)
+    " "
+    (pad-right (commit-record-date c) 16)
+    " "
+    (commit-record-subject c)
+    (refs-suffix (commit-record-refs c))))
 
 ;;; Commit show projection ;;;
 

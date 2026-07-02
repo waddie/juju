@@ -25,6 +25,7 @@
 (require "rebase-todo.scm")
 (require "rebase-view.scm")
 (require "blame-view.scm")
+(require "log-view.scm")
 (require "menu-model.scm")
 (require "menu.scm")
 (require "prompts.scm")
@@ -65,6 +66,7 @@
   juju-describe
   ;; branch/bookmark, stash, listings
   juju-switch
+  juju-edit
   juju-branch-create
   juju-branch-set
   juju-branch-rename
@@ -114,14 +116,16 @@
       (open-status-view cwd)
       (set-status! "juju: cannot determine working directory"))))
 
-;;@doc Show the recent log of the current workspace in a scrollable overlay.
+;;@doc Show the recent log of the current workspace in an interactive overlay.
 (define (juju-log)
   (let ([b (resolve-backend)])
-    (when b
-      (let ([commits (backend-log b #f (hash 'limit (juju-log-count)))])
-        (show-text-view
-          (string-append " juju log (" (symbol->string (backend-name b)) ") ")
-          (map format-commit-line commits))))))
+    (when b (open-log-for b (juju-log-count)))))
+
+;; Open the interactive log view. Its mutation epilogue mirrors `report`: after
+;; an edit/new/revert/... an open status view refreshes so it reflects the move.
+(define (open-log-for b limit)
+  (open-log-view b (hash 'limit limit)
+    (lambda () (when (juju-auto-refresh) (refresh-open-view!)))))
 
 ;;@doc Show the workspace diff (changes against HEAD / the working copy).
 (define (juju-diff)
@@ -400,6 +404,17 @@
           (prompt "Switch to (branch/bookmark/rev): "
             (lambda (input)
               (when (not (blank? input)) (report (backend-switch b input))))))))))
+
+;;@doc Edit a change, making it the working copy: :juju-edit <rev> (jj; prompts if omitted).
+(define (juju-edit . args)
+  (with-cap 'edit
+    (lambda (b)
+      (if (pair? args)
+        (report (backend-edit b (to-string (car args))))
+        (push-component!
+          (prompt "Edit which change (rev): "
+            (lambda (input)
+              (when (not (blank? input)) (report (backend-edit b input))))))))))
 
 ;;@doc Create a branch/bookmark: :juju-branch-create <name> [rev] (prompts for name if omitted).
 (define (juju-branch-create . args)
@@ -733,11 +748,8 @@
     (menu-arg #\n 'count "-n count" (number->string (juju-log-count)))
     (menu-action #\l "show log"
       (lambda (switches)
-        (let* ([n (parse-positive-int (sw switches 'count) (juju-log-count))]
-               [commits (backend-log b #f (hash 'limit n))])
-          (show-text-view
-            (string-append " juju log (" (symbol->string (backend-name b)) ") ")
-            (map format-commit-line commits)))))))
+        (let ([n (parse-positive-int (sw switches 'count) (juju-log-count))])
+          (open-log-for b n))))))
 
 ;; Parse a positive integer from `s` (an arg value), falling back to `default`.
 (define (parse-positive-int s default)
@@ -940,16 +952,6 @@
     [else (find-file-item (cdr items) rel)]))
 
 ;;; Formatting helpers ;;;
-
-(define (format-commit-line c)
-  (string-append
-    (pad-right (commit-record-short-id c) 12)
-    " "
-    (pad-right (commit-record-date c) 16)
-    " "
-    (commit-record-subject c)
-    (let ([refs (commit-record-refs c)])
-      (if (null? refs) "" (string-append "  (" (string-join refs ", ") ")")))))
 
 ;; Reconstruct displayable diff lines from parsed hunks (for the diff overlay).
 (define (hunks->lines hunks)

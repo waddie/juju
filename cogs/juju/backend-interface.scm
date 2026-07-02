@@ -59,6 +59,7 @@
   backend-rebase-skip
   ;; branch/bookmark + stash (phase 4)
   backend-switch
+  backend-edit
   backend-branch-create
   backend-branch-set
   backend-branch-rename
@@ -234,7 +235,10 @@
 ;; bookmark set), the counterpart to `branch-create` which only creates.
 ;; set-upstream and the stash family are git-only (jj has no index/stash and
 ;; tracks remotes differently); the capability set gates them.
+;; `edit` makes an existing change the working copy in place (jj edit); git has
+;; no safe equivalent, so only jj advertises the capability.
 (define (backend-switch b rev) (backend-mutate b 'switch (list rev)))
+(define (backend-edit b rev) (backend-mutate b 'edit (list rev)))
 (define (backend-branch-create b name rev) (backend-mutate b 'branch-create (list name rev)))
 (define (backend-branch-set b name rev) (backend-mutate b 'branch-set (list name rev)))
 (define (backend-branch-rename b old new) (backend-mutate b 'branch-rename (list old new)))

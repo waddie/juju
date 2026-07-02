@@ -630,6 +630,38 @@
   (map (lambda (r) (hash-ref r 'tag)) BLAME-VIEW-ROWS)
   '(commit file commit commit))
 
+;;; log rows ;;;
+
+(displayln "log rows:")
+(define LOG-COMMIT
+  (make-commit-record "changeidone" "abc123" "A. Author" "3 days ago" "subject one" '()))
+(define LOG-COMMIT-REFS
+  (make-commit-record "changeidtwo" "def456" "A. Author" "2 days ago" "subject two" '("main" "wip")))
+(define LOG-VIEW-ROWS (log-rows (list LOG-COMMIT LOG-COMMIT-REFS)))
+(check "log row count" (length LOG-VIEW-ROWS) 2)
+(check "log row text pads id and date"
+  (row-text (car LOG-VIEW-ROWS))
+  "abc123       3 days ago       subject one")
+(check "log row appends refs"
+  (row-text (cadr LOG-VIEW-ROWS))
+  "def456       2 days ago       subject two  (main, wip)")
+(check "log row carries the commit-record" (row-object (car LOG-VIEW-ROWS)) LOG-COMMIT)
+(check "log row is a selectable commit row"
+  (list (row-type (car LOG-VIEW-ROWS)) (row-tag (car LOG-VIEW-ROWS))
+    (row-section-kind (car LOG-VIEW-ROWS))
+    (row-selectable? (car LOG-VIEW-ROWS)))
+  '(commit commit log #t))
+
+;;; capabilities ;;;
+
+(displayln "capabilities:")
+(define JJ-B (make-jj-backend "/tmp/x"))
+(define GIT-B (make-git-backend "/tmp/x"))
+(check "jj supports edit" (backend-supports? JJ-B 'edit) #t)
+(check "jj supports switch" (backend-supports? JJ-B 'switch) #t)
+(check "git does not support edit" (backend-supports? GIT-B 'edit) #f)
+(check "git supports switch" (backend-supports? GIT-B 'switch) #t)
+
 ;;; summary ;;;
 
 (newline)

@@ -517,6 +517,17 @@
   (do-rev-op! state-box 'switch "switch to"
     (lambda (b revs) (backend-switch b (first-rev revs)))))
 
+;; e is operand-typed like x: on a selected commit row under a backend with the
+;; edit capability (jj) it makes that change the working copy; anywhere else it
+;; extends as before. Git has no edit capability, so its behaviour is unchanged.
+(define (do-edit-or-extend! state-box)
+  (let* ([state (unbox state-box)]
+         [backend (view-state-backend state)])
+    (if (and (backend-supports? backend 'edit) (not (null? (action-revs state))))
+      (do-rev-op! state-box 'edit "edit"
+        (lambda (b revs) (backend-edit b (first-rev revs))))
+      (do-extend! state-box))))
+
 ;; B sets a bookmark/branch to the selected commit. The ref name can't come from
 ;; the row, so prompt for it, then set-or-move it onto the first selected rev.
 (define (do-set-bookmark! state-box)
@@ -656,12 +667,12 @@
     ""
     "Stage:     s stage   u unstage   S stage all   U unstage all"
     "           x discard files / drop stash / abandon commit"
-    "Commit:    c commit   a amend   e extend"
+    "Commit:    c commit   a amend   e extend (on a commit row: edit, jj)"
     "Remote:    f fetch   F pull   P push"
     ""
     "On a commit (recent/bookmarks/...):"
     "           Enter show   V revert   y cherry-pick   r rebase onto"
-    "           i rebase interactively from here"
+    "           i rebase interactively from here   e edit change (jj)"
     "           b switch   B set bookmark here   p stash pop"
     "           z undo   Z redo"
     ""
@@ -726,7 +737,7 @@
       ;; Commit family.
       [(char-is? event #\c) (do-commit! state-box #f) event-result/consume]
       [(char-is? event #\a) (do-commit! state-box #t) event-result/consume]
-      [(char-is? event #\e) (do-extend! state-box) event-result/consume]
+      [(char-is? event #\e) (do-edit-or-extend! state-box) event-result/consume]
 
       ;; Remote.
       [(char-is? event #\f) (do-network! state-box 'fetch 'fetch) event-result/consume]

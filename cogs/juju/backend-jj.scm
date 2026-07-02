@@ -42,6 +42,7 @@
     bookmark
     branch
     switch
+    edit
     squash
     split
     abandon
@@ -423,6 +424,7 @@
       [(eq? op 'rebase-interactive) (jj-rebase-interactive root (car args))]
       [(eq? op 'revert) (jj-revert root (car args))]
       [(eq? op 'switch) (jj-switch root (car args))]
+      [(eq? op 'edit) (jj-edit root (car args))]
       [(eq? op 'branch-create) (jj-bookmark-create root (car args) (cadr args))]
       [(eq? op 'branch-set) (jj-bookmark-set root (car args) (cadr args))]
       [(eq? op 'branch-rename) (jj-bookmark-rename root (car args) (cadr args))]
@@ -599,6 +601,14 @@
   (if (blank? rev)
     (err-result "switch needs a bookmark or rev" #f)
     (jj-run* root (list "new" rev) (string-append "New change on " rev))))
+
+;; Edit makes an existing change the working copy in place (descendants are
+;; auto-rebased as it changes). jj itself refuses immutable commits; that error
+;; surfaces through the result. Reversible via jj undo.
+(define (jj-edit root rev)
+  (if (blank? rev)
+    (err-result "edit needs a rev" #f)
+    (jj-run* root (list "edit" rev) (string-append "Editing " rev))))
 
 ;; Create a bookmark at `rev` (@ when none given), without moving @.
 (define (jj-bookmark-create root name rev)
