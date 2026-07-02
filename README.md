@@ -8,6 +8,10 @@ One interface, two backends: Git and [Jujutsu](https://github.com/jj-vcs/jj).
 
 This is very early alpha software. Use at own risk.
 
+## Demo
+
+![Interactive rebase of a git repo with Juju](https://github.com/waddie/juju/blob/main/images/juju.gif?raw=true)
+
 ## Install
 
 ### Forge (Steel package manager)
