@@ -242,7 +242,7 @@
 (define (backend-branch-create b name rev) (backend-mutate b 'branch-create (list name rev)))
 (define (backend-branch-set b name rev) (backend-mutate b 'branch-set (list name rev)))
 (define (backend-branch-rename b old new) (backend-mutate b 'branch-rename (list old new)))
-(define (backend-branch-delete b name) (backend-mutate b 'branch-delete (list name)))
+(define (backend-branch-delete b name opts) (backend-mutate b 'branch-delete (list name opts)))
 (define (backend-set-upstream b name upstream) (backend-mutate b 'set-upstream (list name upstream)))
 (define (backend-stash b opts) (backend-mutate b 'stash (list opts)))
 (define (backend-stash-pop b ref) (backend-mutate b 'stash-pop (list ref)))

@@ -456,7 +456,7 @@
     (lambda (b)
       (if (null? args)
         (set-status! "juju: usage - :juju-branch-delete <name>")
-        (report (backend-branch-delete b (to-string (car args))))))))
+        (report (backend-branch-delete b (to-string (car args)) (hash)))))))
 
 ;;@doc Set a branch's upstream: :juju-set-upstream <branch> <upstream> (git).
 (define (juju-set-upstream . args)
@@ -578,7 +578,16 @@
 (define (sw switches flag)
   (and (hash-contains? switches flag) (hash-ref switches flag)))
 
-;;@doc Open the rebase transient (switch: --autosquash on git; action: onto a ref).
+;; Collect the switches in `flags` that are on into an opts hash for the
+;; backend call. Off switches are omitted; backends read them with a #f
+;; default, and the network backends additionally gate each flag on its
+;; subcommand.
+(define (switch-opts switches flags)
+  (foldl (lambda (flag h) (if (sw switches flag) (hash-insert h flag #t) h))
+    (hash)
+    flags))
+
+;;@doc Open the rebase transient (--autosquash on git, --skip-emptied on jj; action: onto a ref).
 (define (juju-rebase-menu)
   (with-cap 'rebase
     (lambda (b) (show-menu (menu-title b "Rebase") (rebase-menu-entries b)))))
@@ -589,6 +598,9 @@
     (if (backend-supports? b 'autosquash)
       (list (menu-switch #\a 'autosquash "--autosquash (fold fixup!/squash!)" #f))
       '())
+    (if (backend-supports? b 'rebase-skip-emptied)
+      (list (menu-switch #\e 'skip-emptied "--skip-emptied (abandon emptied commits)" #f))
+      '())
     (list
       (menu-action #\o "onto a ref"
         (lambda (switches)
@@ -597,7 +609,10 @@
               (lambda (input)
                 (when (not (blank? input))
                   (report (backend-rebase b
-                           (hash 'onto input 'autosquash (sw switches 'autosquash))))))))))
+                           (hash-insert
+                             (switch-opts switches '(autosquash skip-emptied))
+                             'onto
+                             input)))))))))
       (menu-action #\i "interactive (edit todo)"
         (lambda (switches) (open-rebase-interactive b #f))))))
 
@@ -614,7 +629,7 @@
       [(null? commits) (set-status! "juju: no commits to rebase in range")]
       [else (open-rebase-view (make-todo commits) (rebase-apply-callback b resolved))])))
 
-;;@doc Open the remote transient (fetch / pull / push; force-with-lease on git).
+;;@doc Open the remote transient (fetch / pull / push, with per-action switches).
 (define (juju-remote-menu)
   (with-cap 'fetch
     (lambda (b) (show-menu (menu-title b "Remote") (remote-menu-entries b)))))
@@ -628,6 +643,10 @@
     (if (backend-supports? b 'fetch-prune)
       (list (menu-switch #\P 'prune "--prune (fetch)" #f))
       '())
+    (list (menu-switch #\A 'all-remotes "--all-remotes (fetch)" #f))
+    (if (backend-supports? b 'push-set-upstream)
+      (list (menu-switch #\U 'set-upstream "--set-upstream (push)" #f))
+      '())
     (if (backend-supports? b 'pull-rebase)
       (list (menu-switch #\R 'rebase "--rebase (pull)" #f))
       '())
@@ -635,15 +654,15 @@
       (menu-action #\f "fetch"
         (lambda (switches)
           (report (backend-mutate b 'fetch
-                   (list (if (sw switches 'prune) (hash 'prune #t) (hash)))))))
+                   (list (switch-opts switches '(prune all-remotes)))))))
       (menu-action #\u "pull"
         (lambda (switches)
           (report (backend-mutate b 'pull
-                   (list (if (sw switches 'rebase) (hash 'rebase #t) (hash)))))))
+                   (list (switch-opts switches '(rebase)))))))
       (menu-action #\p "push"
         (lambda (switches)
           (report (backend-mutate b 'push
-                   (list (if (sw switches 'force) (hash 'force #t) (hash))))))))))
+                   (list (switch-opts switches '(force set-upstream))))))))))
 
 ;;@doc Open the branch/bookmark transient (create / switch / rename / delete).
 (define (juju-branch-menu)
@@ -652,8 +671,11 @@
 
 (define (branch-menu-entries b)
   (append
+    (list (menu-info "Branch / bookmark"))
+    (if (backend-supports? b 'branch-force-delete)
+      (list (menu-switch #\f 'force "force (delete: -D)" #f))
+      '())
     (list
-      (menu-info "Branch / bookmark")
       (menu-action #\c "create"
         (lambda (switches)
           (push-component!
@@ -684,10 +706,11 @@
                         (when (not (blank? new)) (report (backend-branch-rename b old new))))))))))))
       (menu-action #\d "delete"
         (lambda (switches)
-          (push-component!
-            (prompt "Delete which branch/bookmark: "
-              (lambda (input)
-                (when (not (blank? input)) (report (backend-branch-delete b input)))))))))
+          (let ([opts (if (sw switches 'force) (hash 'force #t) (hash))])
+            (push-component!
+              (prompt "Delete which branch/bookmark: "
+                (lambda (input)
+                  (when (not (blank? input)) (report (backend-branch-delete b input opts))))))))))
     (if (backend-supports? b 'set-upstream)
       (list
         (menu-action #\u "set upstream"

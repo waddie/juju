@@ -661,6 +661,11 @@
 (check "jj supports switch" (backend-supports? JJ-B 'switch) #t)
 (check "git does not support edit" (backend-supports? GIT-B 'edit) #f)
 (check "git supports switch" (backend-supports? GIT-B 'switch) #t)
+(check "git supports push-set-upstream" (backend-supports? GIT-B 'push-set-upstream) #t)
+(check "git supports branch-force-delete" (backend-supports? GIT-B 'branch-force-delete) #t)
+(check "jj does not support branch-force-delete" (backend-supports? JJ-B 'branch-force-delete) #f)
+(check "jj supports rebase-skip-emptied" (backend-supports? JJ-B 'rebase-skip-emptied) #t)
+(check "git does not support rebase-skip-emptied" (backend-supports? GIT-B 'rebase-skip-emptied) #f)
 
 ;;; summary ;;;
 

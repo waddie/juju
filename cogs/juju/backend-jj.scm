@@ -49,6 +49,7 @@
     describe
     rebase
     rebase-interactive
+    rebase-skip-emptied
     revert
     undo
     redo))
@@ -428,7 +429,7 @@
       [(eq? op 'branch-create) (jj-bookmark-create root (car args) (cadr args))]
       [(eq? op 'branch-set) (jj-bookmark-set root (car args) (cadr args))]
       [(eq? op 'branch-rename) (jj-bookmark-rename root (car args) (cadr args))]
-      [(eq? op 'branch-delete) (jj-bookmark-delete root (car args))]
+      [(eq? op 'branch-delete) (jj-bookmark-delete root (car args) (cadr args))]
       [else #f]))) ; stage/unstage/stash/set-upstream/etc: unsupported under jj
 
 (define (jj-run* root args success-msg)
@@ -486,10 +487,14 @@
 (define (jj-extend root)
   (jj-run* root (list "squash") "Squashed @ into parent"))
 
-;; opts may carry 'remote (string). jj uses its configured default otherwise.
+;; opts may carry 'remote (string) and 'all-remotes (#t, fetch only). jj uses
+;; its configured default remote otherwise.
 (define (jj-network root subcmd opts success-msg)
   (let* ([remote (if (and (hash? opts) (hash-contains? opts 'remote)) (hash-ref opts 'remote) #f)]
-         [args (append (list "git" subcmd) (if remote (list "--remote" remote) '()))]
+         [all-remotes (opt opts 'all-remotes #f)]
+         [args (append (list "git" subcmd)
+                (if (and all-remotes (string=? subcmd "fetch")) (list "--all-remotes") '())
+                (if remote (list "--remote" remote) '()))]
          [res (run-vcs root "jj" args)])
     (if (vcs-ok? res)
       (ok-result (let ([tail (result-tail res)])
@@ -540,12 +545,15 @@
     (err-result "describe aborted: empty message" #f)
     (jj-run* root (list "describe" "-m" message) "Described @")))
 
-;; Rebase the branch containing @ onto `onto`.
+;; Rebase the branch containing @ onto `onto`. With 'skip-emptied, commits
+;; that become empty are abandoned rather than kept.
 (define (jj-rebase root rebase-opts)
-  (let ([onto (opt rebase-opts 'onto #f)])
+  (let ([onto (opt rebase-opts 'onto #f)]
+        [skip-emptied (opt rebase-opts 'skip-emptied #f)])
     (if (blank? onto)
       (err-result "rebase needs a destination rev" #f)
-      (jj-run* root (list "rebase" "-b" "@" "--onto" onto)
+      (jj-run* root (append (list "rebase" "-b" "@" "--onto" onto)
+                     (if skip-emptied (list "--skip-emptied") '()))
         (string-append "Rebased onto " onto)))))
 
 ;;; Interactive rebase ;;;
@@ -631,7 +639,9 @@
     (jj-run* root (list "bookmark" "rename" old new)
       (string-append "Renamed " old " to " new))))
 
-(define (jj-bookmark-delete root name)
+;; opts is accepted for interface uniformity; bookmark delete has no
+;; safe/force distinction, so it is ignored.
+(define (jj-bookmark-delete root name opts)
   (if (blank? name)
     (err-result "delete needs a bookmark name" #f)
     (jj-run* root (list "bookmark" "delete" name) (string-append "Deleted bookmark " name))))

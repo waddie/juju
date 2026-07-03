@@ -44,6 +44,8 @@
     fetch
     fetch-prune
     pull-rebase
+    push-set-upstream
+    branch-force-delete
     commit-no-verify
     commit-signoff
     stash
@@ -475,7 +477,7 @@
       [(eq? op 'branch-create) (git-branch-create root (car args) (cadr args))]
       [(eq? op 'branch-set) (git-branch-set root (car args) (cadr args))]
       [(eq? op 'branch-rename) (git-branch-rename root (car args) (cadr args))]
-      [(eq? op 'branch-delete) (git-branch-delete root (car args))]
+      [(eq? op 'branch-delete) (git-branch-delete root (car args) (cadr args))]
       [(eq? op 'set-upstream) (git-set-upstream root (car args) (cadr args))]
       [(eq? op 'stash) (git-stash root (car args))]
       [(eq? op 'stash-pop) (git-stash-cmd root "pop" (car args))]
@@ -640,20 +642,24 @@
 
 ;;; Network ;;;
 ;;;
-;;; opts is a hash that may carry 'remote (string), 'force (#t, push only),
-;;; 'prune (#t, fetch only), and 'rebase (#t, pull only). The remote, when
-;;; omitted, lets git use its configured default. Each flag is gated on its
-;;; subcommand so a switch carried over from the shared remote menu is inert
-;;; where it does not apply.
+;;; opts is a hash that may carry 'remote (string), 'force and 'set-upstream
+;;; (#t, push only), 'prune and 'all-remotes (#t, fetch only), and 'rebase
+;;; (#t, pull only). The remote, when omitted, lets git use its configured
+;;; default. Each flag is gated on its subcommand so a switch carried over
+;;; from the shared remote menu is inert where it does not apply.
 
 (define (git-network root subcmd opts)
   (let* ([remote (opt opts 'remote #f)]
          [force (opt opts 'force #f)]
          [prune (opt opts 'prune #f)]
+         [all-remotes (opt opts 'all-remotes #f)]
+         [set-upstream (opt opts 'set-upstream #f)]
          [rebase (opt opts 'rebase #f)]
          [args (append (list subcmd)
                 (if (and force (string=? subcmd "push")) (list "--force-with-lease") '())
+                (if (and set-upstream (string=? subcmd "push")) (list "-u") '())
                 (if (and prune (string=? subcmd "fetch")) (list "--prune") '())
+                (if (and all-remotes (string=? subcmd "fetch")) (list "--all") '())
                 (if (and rebase (string=? subcmd "pull")) (list "--rebase") '())
                 (if remote (list remote) '()))]
          [res (run-vcs root "git" args)])
@@ -860,10 +866,12 @@
     (git-run* root (list "branch" "-m" old new)
       (string-append "Renamed " old " to " new))))
 
-(define (git-branch-delete root name)
+;; opts may carry 'force (#t): -D instead of the safe -d.
+(define (git-branch-delete root name opts)
   (if (blank? name)
     (err-result "delete needs a branch name" #f)
-    (git-run* root (list "branch" "-d" name) (string-append "Deleted branch " name))))
+    (git-run* root (list "branch" (if (opt opts 'force #f) "-D" "-d") name)
+      (string-append "Deleted branch " name))))
 
 (define (git-set-upstream root name upstream)
   (if (or (blank? name) (blank? upstream))
