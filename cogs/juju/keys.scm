@@ -24,9 +24,12 @@
   (let ([m (key-event-modifier event)])
     (or (not m) (equal? m 0))))
 
-;;@doc #t when `event` is the unmodified character `ch`.
+;;@doc #t when `event` is the character `ch` with no modifier beyond shift.
+;; Uppercase letters arrive with the shift modifier set, and the char already
+;; encodes the case, so shift must be accepted or uppercase keys never match.
 (define (char-is? event ch)
-  (and (no-modifier? event)
+  (and (let ([m (key-event-modifier event)])
+        (or (not m) (equal? m 0) (equal? m key-modifier-shift)))
     (equal? (key-event-char event) ch)))
 
 ;;@doc #t when `event` is Ctrl + `ch`.
