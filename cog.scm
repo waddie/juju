@@ -18,5 +18,5 @@
 ;;; Forge copies this directory to ~/.steel/cogs/juju/.
 
 (define package-name 'juju)
-(define version "0.3.1-alpha")
+(define version "0.3.2-alpha")
 (define dependencies '())

@@ -300,11 +300,15 @@
 
 (define (jj-log* root revset opts)
   (let* ([limit (if (hash-contains? opts 'limit) (hash-ref opts 'limit) 50)]
+         [full (and (hash-contains? opts 'full) (hash-ref opts 'full))]
+         ;; The explicit revset wins; else `full` escapes jj's curated default
+         ;; revset to the whole ancestry of the working copy; else jj's default.
+         [rev (if revset revset (if full "::@" #f))]
          [args (append
                 (list "log" "--no-graph" "-T" JJ-LOG-TEMPLATE
                   "-n"
                   (number->string limit))
-                (if revset (list "-r" revset) '()))]
+                (if rev (list "-r" rev) '()))]
          [res (run-vcs root "jj" args)])
     (if (vcs-ok? res)
       (parse-jj-records (vcs-stdout res))

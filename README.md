@@ -149,17 +149,24 @@ backend lacks (staging under `jj`, stash under `jj`) are inert.
 recent commits/changes. Each row is a commit, and the commit actions from the
 status view work on the row under the cursor.
 
-| Key                  | Action                                               |
-| -------------------- | ---------------------------------------------------- |
-| `j` / `k`, `↑` / `↓` | Move the cursor                                      |
-| `Ctrl-u` / `Ctrl-d`  | Move ten lines                                       |
-| `Enter`              | Show the commit's diff                               |
-| `e`                  | Edit: make the change the working copy (`jj`)        |
-| `n` / `b`            | New change on the commit (`jj new` / `git checkout`) |
-| `V` / `y` / `r`      | Revert / cherry-pick / rebase-onto the commit        |
-| `g`                  | Refresh                                              |
-| `?`                  | Key reference                                        |
-| `q` / `Esc`          | Quit                                                 |
+| Key                           | Action                                               |
+| ----------------------------- | ---------------------------------------------------- |
+| `j` / `k`, `↑` / `↓`          | Move the cursor                                      |
+| `Ctrl-u` / `Ctrl-d`           | Move ten lines                                       |
+| `j` / `Ctrl-d` / `End` at end | Load an older page (paginate the full log)           |
+| `Enter`                       | Show the commit's diff                               |
+| `e`                           | Edit: make the change the working copy (`jj`)        |
+| `n` / `b`                     | New change on the commit (`jj new` / `git checkout`) |
+| `V` / `y` / `r`               | Revert / cherry-pick / rebase-onto the commit        |
+| `g`                           | Refresh                                              |
+| `?`                           | Key reference                                        |
+| `q` / `Esc`                   | Quit                                                 |
+
+Scrolling to the bottom loads another page of older history in place: each step
+reveals `set-juju-log-count!` more entries, so you can page back to the complete
+log without leaving the view. Under `jj` the first load expands from the curated
+default revset to the full `::@` ancestry of the working copy. When there is no
+more history the status line shows "end of history".
 
 Mutations refresh the log in place (the cursor stays on the same change) and
 any open status view. `jj` refuses to edit an immutable commit; the error shows
@@ -226,7 +233,7 @@ have (hopefully) sensible defaults; set only what you want to change.
 | Setter                              | Default   | Effect                                      |
 | ----------------------------------- | --------- | ------------------------------------------- |
 | `(set-juju-recent-count! n)`        | `10`      | Entries in the Recent section               |
-| `(set-juju-log-count! n)`           | `50`      | Entries `:juju-log` lists                   |
+| `(set-juju-log-count! n)`           | `50`      | Entries `:juju-log` lists / load-more page  |
 | `(set-juju-colocated-default! sym)` | `'jj`     | Backend for a colocated repo (`'git`/`'jj`) |
 | `(set-juju-auto-refresh! bool)`     | `#t`      | Typed commands refresh an open view         |
 | `(set-juju-warn-colocated! bool)`   | `#t`      | Show the colocated `git`→`jj` desync note   |

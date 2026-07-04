@@ -30,9 +30,12 @@
 (define COMPONENT-NAME "juju-log-view")
 
 ;; commits: the commit-record list currently shown, refreshed after a mutation.
-;; opts: the backend-log opts hash the view was opened with, reused on reload.
+;; opts: the backend-log opts hash the view was opened with; `load-more!` grows
+;;   its `'limit` (and sets `'full`) so scrolling past the end reveals older
+;;   history. Reused on reload.
+;; exhausted: #t once a load-more returned no new rows, so we stop trying.
 ;; on-change: thunk run after any mutation so an open status view stays current.
-(struct lv-state (backend opts commits cursor top message message-tag on-change)
+(struct lv-state (backend opts commits cursor top message message-tag exhausted on-change)
   #:mutable
   #:transparent)
 
@@ -85,14 +88,57 @@
   (let ([commits (lv-state-commits state)])
     (if (null? commits) #f (list-ref commits (lv-state-cursor state)))))
 
-;; Re-fetch the log with the opts the view was opened with, keeping the cursor
-;; on the same change when it is still listed (a mutation can move or drop it).
+(define (at-last? state)
+  (= (lv-state-cursor state) (- (commit-count state) 1)))
+
+;; Fetch the next page when moving down off the last loaded row (and history is
+;; not yet exhausted). Called before the move; `load-more!` keeps the cursor on
+;; the same commit, so the following move advances into the freshly loaded rows.
+(define (maybe-load-more! state-box)
+  (let ([state (unbox state-box)])
+    (when (and (> (commit-count state) 0)
+           (at-last? state)
+           (not (lv-state-exhausted state)))
+      (load-more! state-box))))
+
+;; Re-fetch the log with the current opts, keeping the cursor on the same change
+;; when it is still listed (a mutation can move or drop it). Clears `exhausted`:
+;; a refresh or mutation may have grown history, so load-more is worth retrying.
 (define (reload! state-box)
   (let* ([state (unbox state-box)]
          [prev (cursor-commit state)]
          [commits (backend-log (lv-state-backend state) #f (lv-state-opts state))])
     (set-lv-state-commits! state commits)
-    (set-lv-state-cursor! state (restore-cursor commits prev (lv-state-cursor state)))))
+    (set-lv-state-cursor! state (restore-cursor commits prev (lv-state-cursor state)))
+    (set-lv-state-exhausted! state #f)))
+
+;; Grow the log by one page: bump the opts `'limit` and set `'full` (jj then
+;; escapes its curated revset to the whole `::@` ancestry; git already lists
+;; HEAD ancestry). The page size is seeded as `'page` at open, falling back to
+;; the current limit.
+(define (grow-opts opts)
+  (let* ([limit (if (hash-contains? opts 'limit) (hash-ref opts 'limit) 50)]
+         [page (if (hash-contains? opts 'page) (hash-ref opts 'page) limit)])
+    (hash-insert (hash-insert opts 'limit (+ limit page)) 'full #t)))
+
+;; Fetch the next page. When the returned count is unchanged there is no more
+;; history: mark `exhausted` and say so. The curated->`::@` jj transition can
+;; return fewer rows (sibling heads drop out); that is not exhaustion, and a
+;; dropped-sibling cursor falls back via `restore-cursor`.
+(define (load-more! state-box)
+  (let* ([state (unbox state-box)]
+         [prev (cursor-commit state)]
+         [before (commit-count state)]
+         [opts (grow-opts (lv-state-opts state))]
+         [commits (backend-log (lv-state-backend state) #f opts)])
+    (set-lv-state-opts! state opts)
+    (set-lv-state-commits! state commits)
+    (set-lv-state-cursor! state (restore-cursor commits prev (lv-state-cursor state)))
+    (if (= (length commits) before)
+      (begin
+        (set-lv-state-exhausted! state #t)
+        (set-message! state "juju: end of history" 'info))
+      (clear-message! state))))
 
 ;; Index of `prev`'s change in `commits` (matched by id), else `fallback`
 ;; clamped into range.
@@ -166,6 +212,8 @@
     "juju log - keys"
     ""
     "Movement:  j/k up/down   C-u/C-d page   Home/End ends"
+    "           at the bottom, j/C-d/End load older history"
+    "           (jj expands to the full ::@ ancestry)"
     ""
     "On the change under the cursor:"
     "           Enter show   e edit, make it the working copy (jj)"
@@ -183,11 +231,20 @@
       [(char-is? event #\q) (close-lv) event-result/close]
 
       [(or (key-event-up? event) (char-is? event #\k)) (move-cursor! state -1) event-result/consume]
-      [(or (key-event-down? event) (char-is? event #\j)) (move-cursor! state 1) event-result/consume]
+      [(or (key-event-down? event) (char-is? event #\j))
+        (maybe-load-more! state-box)
+        (move-cursor! state 1)
+        event-result/consume]
       [(ctrl-char? event #\u) (move-cursor! state -10) event-result/consume]
-      [(ctrl-char? event #\d) (move-cursor! state 10) event-result/consume]
+      [(ctrl-char? event #\d)
+        (maybe-load-more! state-box)
+        (move-cursor! state 10)
+        event-result/consume]
       [(key-event-home? event) (cursor-to! state 0) event-result/consume]
-      [(key-event-end? event) (cursor-to! state (commit-count state)) event-result/consume]
+      [(key-event-end? event)
+        (maybe-load-more! state-box)
+        (cursor-to! state (commit-count state))
+        event-result/consume]
 
       [(key-event-enter? event) (show-at-cursor! state) event-result/consume]
       [(char-is? event #\e) (do-edit! state-box) event-result/consume]
@@ -215,7 +272,7 @@
   (let ([commits (backend-log backend #f opts)])
     (if (null? commits)
       (set-status! "juju: nothing to show (log)")
-      (let* ([state-box (box (lv-state backend opts commits 0 0 "" 'info on-change))]
+      (let* ([state-box (box (lv-state backend opts commits 0 0 "" 'info #f on-change))]
              [handlers (hash "handle_event" handle-lv
                         "cursor"
                         (lambda (state-box rect) #f)

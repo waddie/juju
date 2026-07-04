@@ -123,8 +123,10 @@
 
 ;; Open the interactive log view. Its mutation epilogue mirrors `report`: after
 ;; an edit/new/revert/... an open status view refreshes so it reflects the move.
+;; `'page` seeds the load-more page size (the log view has no config access), so
+;; it grows the limit by the same count the view opened with.
 (define (open-log-for b limit)
-  (open-log-view b (hash 'limit limit)
+  (open-log-view b (hash-insert (hash 'limit limit) 'page limit)
     (lambda () (when (juju-auto-refresh) (refresh-open-view!)))))
 
 ;;@doc Show the workspace diff (changes against HEAD / the working copy).
