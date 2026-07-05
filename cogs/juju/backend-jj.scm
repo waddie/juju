@@ -20,6 +20,7 @@
 (require "model.scm")
 (require "diff.scm")
 (require "string-utils.scm")
+(require "ui-utils.hx/strings.scm")
 (require "backend-interface.scm")
 (require "config.scm")
 (require "rebase-todo.scm")

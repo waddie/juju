@@ -19,6 +19,7 @@
 (require "steel/result")
 (require-builtin steel/process)
 (require "string-utils.scm")
+(require "ui-utils.hx/strings.scm")
 
 (provide run-vcs
   run-vcs-input

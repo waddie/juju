@@ -15,7 +15,7 @@
 ;;; is unit-testable on its own.
 
 (require "model.scm")
-(require "string-utils.scm")
+(require "ui-utils.hx/strings.scm")
 
 (provide build-rows
   diff-cache-key

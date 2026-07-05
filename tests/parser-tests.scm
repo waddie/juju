@@ -8,10 +8,12 @@
 ;;; parser-tests.scm - unit tests for juju's pure functions
 ;;;
 ;;; The parsers (diff, porcelain-v2 status, jj summary, log records) plus the
-;;; row-flattening, fold-state, scroll, and backend-selection logic are all pure:
-;;; data in, data out. They are fed canned input, so no live process or Helix
-;;; runtime is needed. Run via the wrapper, which feeds this file on stdin so
-;;; relative requires resolve from the repo root:
+;;; row-flattening, fold-state, and backend-selection logic are all pure: data
+;;; in, data out. They are fed canned input, so no live process or Helix
+;;; runtime is needed. The shared string/scroll/navigation helpers are tested
+;;; in the ui-utils.hx repository; that library must be installed (its
+;;; install.sh) for the requires here to resolve. Run via the wrapper, which
+;;; feeds this file on stdin so relative requires resolve from the repo root:
 ;;;
 ;;;   tests/run.sh          (equivalently: steel < tests/parser-tests.scm)
 ;;;
@@ -23,8 +25,6 @@
 (require "cogs/juju/diff.scm")
 (require "cogs/juju/view-rows.scm")
 (require "cogs/juju/operand.scm")
-(require "cogs/juju/scroll.scm")
-(require "cogs/juju/menu-model.scm")
 (require "cogs/juju/backend-interface.scm")
 (require "cogs/juju/backend-git.scm")
 (require "cogs/juju/backend-jj.scm")
@@ -43,16 +43,6 @@
       (displayln (string-append "  FAIL " label))
       (displayln (string-append "         expected: " (to-string expected)))
       (displayln (string-append "         actual:   " (to-string actual))))))
-
-;;; string-utils ;;;
-
-(displayln "string-utils:")
-(check "split-lines trailing newline" (split-lines "a\nb\n") '("a" "b"))
-(check "split-lines no trailing" (split-lines "a\nb") '("a" "b"))
-(check "split-lines empty" (split-lines "") '())
-(check "string-trim" (string-trim "  hi  ") "hi")
-(check "truncate-string" (truncate-string "abcdef" 4) "abc…")
-(check "pad-right" (pad-right "ab" 4) "ab  ")
 
 ;;; diff parser ;;;
 
@@ -283,15 +273,6 @@
   (file-item-expanded? (car (section-items APPLIED-SEC)))
   #t)
 
-;;; scroll math ;;;
-
-(displayln "scroll:")
-(check "clamp-top: cursor in view" (clamp-top 0 3 10 20) 0)
-(check "clamp-top: cursor below view" (clamp-top 0 15 10 20) 6)
-(check "clamp-top: cursor above top" (clamp-top 5 2 10 20) 2)
-(check "clamp-top: never past end" (clamp-top 100 19 10 20) 10)
-(check "clamp-top: total under height" (clamp-top 0 0 10 3) 0)
-
 ;;; backend selection ;;;
 
 (displayln "backend selection:")
@@ -350,32 +331,6 @@
 (check "conflict path" (file-item-path CL) "src/a.txt")
 (check "conflict code" (file-item-status-code CL) 'conflicted)
 (check "conflict blank -> #f" (parse-jj-conflict-line "   ") #f)
-
-;;; transient menu model ;;;
-
-(displayln "menu model:")
-(define MENU-ENTRIES
-  (list
-    (menu-info "Rebase")
-    (menu-switch #\a 'autosquash "--autosquash" #f)
-    (menu-action #\o "onto a ref" (lambda (switches) 'ran))))
-(check "initial switches from defaults"
-  (hash-ref (initial-switches MENU-ENTRIES) 'autosquash)
-  #f)
-(define MENU-SW (hash-insert (initial-switches MENU-ENTRIES) 'autosquash #t))
-(define MENU-ROWS (menu-rows MENU-ENTRIES MENU-SW))
-(check "menu row count" (length MENU-ROWS) 3)
-(check "info row tag" (hash-ref (list-ref MENU-ROWS 0) 'tag) 'info)
-(check "switch on shows [x]"
-  (hash-ref (list-ref MENU-ROWS 1) 'text)
-  "  a  [x] --autosquash")
-(check "switch on row tag" (hash-ref (list-ref MENU-ROWS 1) 'tag) 'section)
-(check "switch off shows [ ]"
-  (hash-ref (list-ref (menu-rows MENU-ENTRIES (initial-switches MENU-ENTRIES)) 1) 'text)
-  "  a  [ ] --autosquash")
-(check "action row text" (hash-ref (list-ref MENU-ROWS 2) 'text) "  o  onto a ref")
-(check "entry key of info is #f" (menu-entry-key (car MENU-ENTRIES)) #f)
-(check "entry key of switch" (menu-entry-key (list-ref MENU-ENTRIES 1)) #\a)
 
 ;;; rebase todo model ;;;
 
@@ -474,31 +429,6 @@
 (check "row text picks" (hash-ref (list-ref TR 0) 'text) "pick   aaaa         add a")
 (check "row tag drop dim" (hash-ref (list-ref TR 1) 'tag) 'info)
 (check "row tag pick" (hash-ref (list-ref TR 0) 'tag) 'commit)
-
-;;; menu model: arg infix ;;;
-
-(displayln "menu model:")
-(define MENU
-  (list (menu-info "T")
-    (menu-switch #\a 'auto "Auto" #f)
-    (menu-arg #\n 'count "-n count" "10")
-    (menu-action #\x "Go" (lambda (s) s))))
-(define MENU-SW (initial-switches MENU))
-(check "initial-switches seeds switch default" (hash-ref MENU-SW 'auto) #f)
-(check "initial-switches seeds arg default" (hash-ref MENU-SW 'count) "10")
-(define MENU-ROWS (menu-rows MENU MENU-SW))
-(check "switch row off" (hash-ref (list-ref MENU-ROWS 1) 'text) "  a  [ ] Auto")
-(check "arg row shows value" (hash-ref (list-ref MENU-ROWS 2) 'text) "  n  -n count: 10")
-(check "arg row set tag" (hash-ref (list-ref MENU-ROWS 2) 'tag) 'section)
-
-(define MENU-UNSET (list (menu-arg #\n 'count "-n count" #f)))
-(define MENU-UNSET-SW (initial-switches MENU-UNSET))
-(check "arg unset default" (hash-ref MENU-UNSET-SW 'count) #f)
-(define MENU-UNSET-ROWS (menu-rows MENU-UNSET MENU-UNSET-SW))
-(check "arg row unset text"
-  (hash-ref (list-ref MENU-UNSET-ROWS 0) 'text)
-  "  n  -n count: (unset)")
-(check "arg row unset tag" (hash-ref (list-ref MENU-UNSET-ROWS 0) 'tag) 'file)
 
 ;;; view-rows: navigation and search ;;;
 

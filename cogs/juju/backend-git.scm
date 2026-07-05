@@ -16,6 +16,7 @@
 (require "model.scm")
 (require "diff.scm")
 (require "string-utils.scm")
+(require "ui-utils.hx/strings.scm")
 (require "backend-interface.scm")
 (require "config.scm")
 (require "rebase-todo.scm")
@@ -24,6 +25,17 @@
   parse-porcelain-status ; exported for unit tests
   parse-stash-line
   parse-git-blame-porcelain)
+
+;; `map` over a 2+ element list tears the editor down between elements when the
+;; callback constructs a struct (make-file-item / make-commit-record): the
+;; Helix-bundled Steel miscompiles it (same class as the iterative append/map
+;; quirk worked around in word-wrap). cons/reverse is the reliable substitute;
+;; use it for every git-data list built here.
+(define (map-list f xs)
+  (let loop ([xs xs] [acc '()])
+    (if (null? xs)
+      (reverse acc)
+      (loop (cdr xs) (cons (f (car xs)) acc)))))
 
 ;; Features the Git model supports. No 'redo/'squash/'split/'abandon/'describe/
 ;; 'oplog: those are jj-only (git's squash is interactive rebase, not a single
@@ -122,13 +134,13 @@
          [recent (git-log* root #f (hash 'limit (juju-recent-count)))])
     (append
       (maybe-section "untracked" "Untracked files" 'untracked
-        (map (lambda (f) (file-from-status f 'untracked)) untracked))
+        (map-list (lambda (f) (file-from-status f 'untracked)) untracked))
       (maybe-section "unstaged" "Unstaged changes" 'unstaged
-        (map (lambda (f) (file-from-status f 'unstaged)) unstaged))
+        (map-list (lambda (f) (file-from-status f 'unstaged)) unstaged))
       (maybe-section "staged" "Staged changes" 'staged
-        (map (lambda (f) (file-from-status f 'staged)) staged))
+        (map-list (lambda (f) (file-from-status f 'staged)) staged))
       (maybe-section "conflicts" "Conflicts" 'conflicts
-        (map (lambda (f) (file-from-status f 'conflict)) conflicts))
+        (map-list (lambda (f) (file-from-status f 'conflict)) conflicts))
       (maybe-section "stashes" "Stashes" 'stashes stashes)
       (if (and upstream (> ahead 0))
         (maybe-section "unpushed" (string-append "Unpushed to " upstream) 'unpushed
@@ -282,7 +294,7 @@
 ;; stable id stash-pop/apply/drop need; the rest is the human subject.
 (define (git-stash-list root)
   (let ([lines (run-vcs-lines root "git" (list "stash" "list"))])
-    (map parse-stash-line lines)))
+    (map-list parse-stash-line lines)))
 
 (define (parse-stash-line line)
   (let ([idx (find-substring line ": ")])
@@ -358,9 +370,9 @@
 ;; Records are terminated by RECORD-SEP (0x1e) and may be newline-separated.
 (define (parse-log-records text)
   (let* ([records (split-many text (string (integer->char 30)))]
-         [trimmed (map (lambda (r) (trim-start r)) records)]
+         [trimmed (map-list (lambda (r) (trim-start r)) records)]
          [non-empty (filter (lambda (r) (not (string=? (string-trim r) ""))) trimmed)])
-    (map parse-log-record non-empty)))
+    (map-list parse-log-record non-empty)))
 
 (define (parse-log-record rec)
   (let* ([fields (field-split rec)]
@@ -372,7 +384,7 @@
 (define (parse-refs s)
   (if (string=? (string-trim s) "")
     '()
-    (map string-trim (split-many s ","))))
+    (map-list string-trim (split-many s ","))))
 
 ;;; Show ;;;
 

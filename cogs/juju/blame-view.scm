@@ -8,24 +8,24 @@
 ;;; blame-view.scm - the interactive blame component
 ;;;
 ;;; Blame as a chase-revisions loop: every line carries its commit, so Enter
-;;; shows that commit, `l` reblames at its parent, and `h` walks back. The same
-;;; shell as text-view (read-only, owns its keys, never touches a buffer) and
-;;; the same decoupling as the rebase editor: it takes closures (`query`,
-;;; `show-commit`) that close over the backend and depends on nothing
+;;; shows that commit, `l` reblames at its parent, and `h` walks back. Built on
+;;; the shared overlay-view shell (ui-utils.hx): the shell owns the frame,
+;;; movement, and close; this module supplies the chase/back/show keys and the
+;;; blame-row projection. Like the rebase editor it takes closures (`query`,
+;;; `show-commit`) that close over the backend, so it depends on nothing
 ;;; juju-specific beyond the pure blame-row projection.
 
 (require-builtin helix/components)
 (require "helix/misc.scm")
+(require "config.scm")
 (require "model.scm")
 (require "view-rows.scm")
-(require "render.scm")
-(require "scroll.scm")
-(require "keys.scm")
-(require "string-utils.scm")
+(require "render.scm") ; juju-tag->style
+(require "ui-utils.hx/keys.scm")
+(require "ui-utils.hx/strings.scm")
+(require "ui-utils.hx/overlay-view.scm")
 
 (provide open-blame-view)
-
-(define COMPONENT-NAME "juju-blame-view")
 
 ;; lines: blame-line list at the current (rev, before) position. rev #f is the
 ;; working copy; before #t means "the parent of rev" (the suffix syntax stays in
@@ -35,23 +35,7 @@
   #:mutable
   #:transparent)
 
-;;; Rendering ;;;
-
-(define (render-bv state-box rect buffer)
-  (let* ([state (unbox state-box)]
-         [content (draw-frame buffer (overlay-area rect) (bv-title state))]
-         [rows (blame-rows (bv-state-lines state))]
-         [height (visible-row-count content)]
-         [top (clamp-top (bv-state-top state) (bv-state-cursor state) height (length rows))])
-    (set-bv-state-top! state top)
-    (draw-rows buffer content rows (bv-state-cursor state) top)
-    (draw-status-line buffer content (status-text state) (bv-state-message-tag state))))
-
 (define LEGEND "j/k move  Enter show  l chase  h back  q quit")
-
-(define (status-text state)
-  (let ([m (bv-state-message state)])
-    (if (string=? m "") LEGEND m)))
 
 (define (bv-title state)
   (string-append " juju blame  " (bv-state-file state) "  @ " (rev-label state) " "))
@@ -63,6 +47,10 @@
       [(bv-state-before state) (string-append "parent of " (string-take rev 8))]
       [else (string-take rev 8)])))
 
+(define (bv-status state)
+  (let ([m (bv-state-message state)])
+    (cons (if (string=? m "") LEGEND m) (bv-state-message-tag state))))
+
 ;;; State edits ;;;
 
 (define (set-message! state text tag)
@@ -72,11 +60,6 @@
 (define (clear-message! state) (set-message! state "" 'info))
 
 (define (line-count state) (length (bv-state-lines state)))
-
-(define (move-cursor! state delta)
-  (let ([n (line-count state)] [c (+ (bv-state-cursor state) delta)])
-    (when (> n 0)
-      (set-bv-state-cursor! state (max 0 (min c (- n 1)))))))
 
 (define (cursor-to! state idx)
   (let ([n (line-count state)])
@@ -133,28 +116,40 @@
   (clear-message! state)
   ((bv-state-show-commit state) (blame-line-commit (cursor-line state))))
 
-;;; Event handling ;;;
+;;; The view's action keys (the shell handles movement and close) ;;;
 
-(define (handle-bv state-box event)
+(define (bv-keys state-box event)
   (let ([state (unbox state-box)])
     (cond
-      [(key-event-escape? event) (close-bv) event-result/close]
-      [(char-is? event #\q) (close-bv) event-result/close]
-
-      [(or (key-event-up? event) (char-is? event #\k)) (move-cursor! state -1) event-result/consume]
-      [(or (key-event-down? event) (char-is? event #\j)) (move-cursor! state 1) event-result/consume]
-      [(ctrl-char? event #\u) (move-cursor! state -10) event-result/consume]
-      [(ctrl-char? event #\d) (move-cursor! state 10) event-result/consume]
-      [(key-event-home? event) (cursor-to! state 0) event-result/consume]
-      [(key-event-end? event) (cursor-to! state (line-count state)) event-result/consume]
-
       [(key-event-enter? event) (show-at-cursor! state) event-result/consume]
       [(char-is? event #\l) (chase! state) event-result/consume]
       [(or (char-is? event #\h) (key-event-backspace? event)) (go-back! state) event-result/consume]
+      [else #f])))
 
-      [else event-result/consume])))
-
-(define (close-bv) (pop-last-component-by-name! COMPONENT-NAME))
+(define blame-view-spec
+  (make-overlay-view
+    #:name
+    "juju-blame-view"
+    #:title
+    bv-title
+    #:rows
+    (lambda (state) (blame-rows (bv-state-lines state)))
+    #:cursor
+    bv-state-cursor
+    #:set-cursor!
+    set-bv-state-cursor!
+    #:top
+    bv-state-top
+    #:set-top!
+    set-bv-state-top!
+    #:status
+    bv-status
+    #:on-key
+    bv-keys
+    #:tag->style
+    juju-tag->style
+    #:overlay-scale
+    (lambda () (juju-overlay-scale))))
 
 ;;@doc
 ;; Open the interactive blame view for `file`, starting from the working-copy
@@ -164,11 +159,5 @@
 (define (open-blame-view file lines query show-commit)
   (if (null? lines)
     (set-status! (string-append "juju: nothing to blame (" file ")"))
-    (let* ([state-box (box (bv-state file #f #f lines 0 0 '() "" 'info query show-commit))]
-           [handlers (hash "handle_event" handle-bv
-                      "cursor"
-                      (lambda (state-box rect) #f)
-                      "required_size"
-                      (lambda (state-box size) size))]
-           [component (new-component! COMPONENT-NAME state-box render-bv handlers)])
-      (push-component! component))))
+    (open-overlay-view! blame-view-spec
+      (bv-state file #f #f lines 0 0 '() "" 'info query show-commit))))

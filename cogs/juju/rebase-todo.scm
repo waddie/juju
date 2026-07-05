@@ -22,7 +22,7 @@
 ;;; its todo.
 
 (require "model.scm")
-(require "string-utils.scm")
+(require "ui-utils.hx/strings.scm")
 
 (provide todo-entry
   todo-entry?

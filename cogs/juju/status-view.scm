@@ -26,10 +26,11 @@
 (require "text-view.scm")
 (require "rebase-todo.scm")
 (require "rebase-view.scm")
-(require "render.scm")
-(require "scroll.scm")
-(require "keys.scm")
+(require "render.scm") ; juju-tag->style
+(require "ui-utils.hx/keys.scm")
 (require "string-utils.scm")
+(require "ui-utils.hx/strings.scm")
+(require "ui-utils.hx/overlay-view.scm")
 
 (provide open-status-view
   refresh-open-view!)
@@ -265,6 +266,12 @@
             (sync-status-folds! state)
             (set-view-state-cursor! state i))]
         [else (loop (- i 1))]))))
+
+;; Close the overlay from within a handler (visiting a file): clear the
+;; open-view handle and pop the component, matching the shell's on-close.
+(define (close-view)
+  (set-box! *open-view* #f)
+  (pop-last-component-by-name! COMPONENT-NAME))
 
 ;; Enter: visit a file (close the view and open it), expand a commit's diff, or
 ;; fall back to fold toggling on sections.
@@ -613,23 +620,15 @@
 
 ;;; Rendering ;;;
 
-(define (render-view state-box rect buffer)
-  (let* ([state (unbox state-box)]
-         [backend (view-state-backend state)]
-         [title (string-append " juju (" (symbol->string (backend-name backend)) ")  "
-                 (backend-root backend)
-                 (colocated-marker backend)
-                 " ")]
-         [content (draw-frame buffer (overlay-area rect) title)]
-         [rows (current-rows state)]
-         [height (visible-row-count content)]
-         [top (clamp-top (view-state-top state) (view-state-cursor state) height (length rows))])
-    (set-view-state-top! state top)
-    (draw-rows buffer content rows (view-state-cursor state) top
-      (view-state-selection state))
-    (draw-status-line buffer content
-      (status-line-text state)
-      (view-state-message-tag state))))
+(define (view-title state)
+  (let ([backend (view-state-backend state)])
+    (string-append " juju (" (symbol->string (backend-name backend)) ")  "
+      (backend-root backend)
+      (colocated-marker backend)
+      " ")))
+
+(define (view-status state)
+  (cons (status-line-text state) (view-state-message-tag state)))
 
 ;; A persistent title marker for a colocated repo on the git backend: git changes
 ;; desync jj's recorded working copy until its next command re-imports them. Empty
@@ -680,27 +679,15 @@
 
 ;;; Event handling ;;;
 
-;; The view state is mutable and lives in the box for the component's lifetime;
-;; each branch mutates it in place. Helix re-renders any layer that consumed an
-;; event, and render reads the (same, mutated) box, so the screen reflects the
-;; change without rebuilding the struct.
-(define (handle-event state-box event)
+;; The action keys. The shared shell handles movement (via the selectable-aware
+;; move!/page!/edge! hooks below) and Esc/q close; this runs first for
+;; everything else and returns #f to fall through to the shell defaults. The
+;; view state is mutable and lives in the box for the component's lifetime; each
+;; branch mutates it in place. Helix re-renders any layer that consumed an event
+;; and render reads the same, mutated box.
+(define (view-keys state-box event)
   (let ([state (unbox state-box)])
     (cond
-      [(key-event-escape? event) (close-view) event-result/close]
-      [(char-is? event #\q) (close-view) event-result/close]
-
-      [(or (key-event-up? event) (char-is? event #\k))
-        (move-cursor! state -1)
-        event-result/consume]
-      [(or (key-event-down? event) (char-is? event #\j))
-        (move-cursor! state 1)
-        event-result/consume]
-      [(ctrl-char? event #\u) (page-cursor! state -8) event-result/consume]
-      [(ctrl-char? event #\d) (page-cursor! state 8) event-result/consume]
-      [(key-event-home? event) (cursor-to-edge! state 'top) event-result/consume]
-      [(key-event-end? event) (cursor-to-edge! state 'bottom) event-result/consume]
-
       ;; Section navigation: }/{ next/prev sibling, ^ enclosing section.
       [(char-is? event #\}) (cursor-to-section! state 'next) event-result/consume]
       [(char-is? event #\{) (cursor-to-section! state 'prev) event-result/consume]
@@ -758,17 +745,50 @@
       ;; Help.
       [(char-is? event #\?) (show-text-view "juju keys" (help-lines)) event-result/consume]
 
-      [else event-result/consume])))
+      [else #f])))
 
 (define (clear-message! state)
   (set-view-state-message! state "")
   (set-view-state-message-tag! state 'info))
 
-(define (close-view)
-  (set-box! *open-view* #f)
-  (pop-last-component-by-name! COMPONENT-NAME))
-
 ;;; Lifecycle ;;;
+
+(define status-view-spec
+  (make-overlay-view
+    #:name
+    COMPONENT-NAME
+    #:title
+    view-title
+    #:rows
+    current-rows
+    #:cursor
+    view-state-cursor
+    #:set-cursor!
+    set-view-state-cursor!
+    #:top
+    view-state-top
+    #:set-top!
+    set-view-state-top!
+    #:status
+    view-status
+    #:marked
+    view-state-selection
+    #:on-key
+    view-keys
+    #:move!
+    move-cursor!
+    #:page!
+    page-cursor!
+    #:edge!
+    cursor-to-edge!
+    #:page-size
+    8
+    #:on-close
+    (lambda (state-box) (set-box! *open-view* #f))
+    #:tag->style
+    juju-tag->style
+    #:overlay-scale
+    (lambda () (juju-overlay-scale))))
 
 ;;@doc
 ;; Open the status view for the backend active in `start-dir`. Echoes a message
@@ -777,19 +797,11 @@
   (let ([backend (active-backend start-dir)])
     (if (not backend)
       (set-status! "juju: not inside a git or jj repository")
-      (let* ([fold (make-fold-state)]
-             [state-box (box (make-view-state backend fold))]
-             [handlers (hash "handle_event" handle-event
-                        "cursor"
-                        (lambda (state-box rect) #f)
-                        "required_size"
-                        (lambda (state-box size) size))]
-             [component (new-component! COMPONENT-NAME
-                         state-box
-                         render-view
-                         handlers)])
-        (set-box! *open-view* state-box)
-        (push-component! component)))))
+      ;; Record the box (for out-of-band refresh) via the on-open callback so
+      ;; the command ends in push-component!, not set-box! (which Helix echoes).
+      (open-overlay-view! status-view-spec
+        (make-view-state backend (make-fold-state))
+        (lambda (state-box) (set-box! *open-view* state-box))))))
 
 ;;@doc
 ;; Refresh the currently-open status view, if any, after an external mutation

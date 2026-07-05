@@ -26,10 +26,11 @@
 (require "rebase-view.scm")
 (require "blame-view.scm")
 (require "log-view.scm")
-(require "menu-model.scm")
-(require "menu.scm")
+(require "render.scm") ; juju-tag->style
+(require "ui-utils.hx/menu-model.scm")
+(require (prefix-in menu. "ui-utils.hx/menu.scm"))
 (require "prompts.scm")
-(require "string-utils.scm")
+(require "ui-utils.hx/strings.scm")
 
 (provide juju-status
   juju-log
@@ -575,6 +576,17 @@
 
 (define (menu-title b label)
   (string-append " " label " (" (symbol->string (backend-name b)) ") "))
+
+;; The transient menu with juju's component name, styling, and live overlay
+;; scale (the shared shell lives in ui-utils.hx; these bind it to juju's theme).
+(define (show-menu title entries)
+  (menu.show-menu title entries
+    #:name
+    "juju-menu"
+    #:tag->style
+    juju-tag->style
+    #:overlay-scale
+    (lambda () (juju-overlay-scale))))
 
 ;; Read switch `flag` from a menu's switch-state hash (#f when absent).
 (define (sw switches flag)

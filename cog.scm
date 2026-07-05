@@ -18,5 +18,15 @@
 ;;; Forge copies this directory to ~/.steel/cogs/juju/.
 
 (define package-name 'juju)
-(define version "0.3.2-alpha")
-(define dependencies '())
+(define version "0.3.3-alpha")
+
+;; The shared UI library (overlay shell, drawing, string/scroll helpers).
+;; Forge installs it to ~/.steel/cogs/ui-utils.hx/ alongside juju; install.sh
+;; does the same by hand. One installed copy serves every plugin that depends
+;; on it, so upgrade dependent plugins together.
+(define dependencies
+  '((#:name "ui-utils.hx"
+     #:git-url
+     "https://github.com/waddie/ui-utils.hx"
+     #:sha
+     "061e213185b94a860d54e108edc93b28d2c86ce7")))

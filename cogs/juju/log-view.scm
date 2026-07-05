@@ -10,24 +10,23 @@
 ;;; The log as a place to act, not just look: every row carries its
 ;;; commit-record, so the commit actions the status view offers on commit rows
 ;;; work here too (show, edit, new/switch, revert, cherry-pick, rebase onto).
-;;; The same shell as text-view (read-only, owns its keys, never touches a
-;;; buffer). It holds the backend struct and gates every action through
-;;; `backend-supports?`; the one juju-cross-cutting effect (refreshing an open
-;;; status view after a mutation) comes in as the `on-change` thunk.
+;;; Built on the shared overlay-view shell (ui-utils.hx). It holds the backend
+;;; struct and gates every action through `backend-supports?`; the one
+;;; juju-cross-cutting effect (refreshing an open status view after a mutation)
+;;; comes in as the `on-change` thunk. Scrolling past the last loaded row grows
+;;; the log, wired through the shell's movement hooks.
 
 (require-builtin helix/components)
 (require "helix/misc.scm")
 (require "backend-interface.scm")
 (require "model.scm")
 (require "view-rows.scm")
-(require "render.scm")
-(require "scroll.scm")
-(require "keys.scm")
+(require "render.scm") ; juju-tag->style
+(require "ui-utils.hx/keys.scm")
+(require "ui-utils.hx/overlay-view.scm")
 (require "text-view.scm")
 
 (provide open-log-view)
-
-(define COMPONENT-NAME "juju-log-view")
 
 ;; commits: the commit-record list currently shown, refreshed after a mutation.
 ;; opts: the backend-log opts hash the view was opened with; `load-more!` grows
@@ -39,23 +38,11 @@
   #:mutable
   #:transparent)
 
-;;; Rendering ;;;
-
-(define (render-lv state-box rect buffer)
-  (let* ([state (unbox state-box)]
-         [content (draw-frame buffer (overlay-area rect) (lv-title state))]
-         [rows (log-rows (lv-state-commits state))]
-         [height (visible-row-count content)]
-         [top (clamp-top (lv-state-top state) (lv-state-cursor state) height (length rows))])
-    (set-lv-state-top! state top)
-    (draw-rows buffer content rows (lv-state-cursor state) top)
-    (draw-status-line buffer content (status-text state) (lv-state-message-tag state))))
-
 (define LEGEND "j/k move  Enter show  e edit  n new  g refresh  ? keys  q quit")
 
-(define (status-text state)
+(define (lv-status state)
   (let ([m (lv-state-message state)])
-    (if (string=? m "") LEGEND m)))
+    (cons (if (string=? m "") LEGEND m) (lv-state-message-tag state))))
 
 (define (lv-title state)
   (string-append " juju log ("
@@ -94,19 +81,17 @@
 ;; Fetch the next page when moving down off the last loaded row (and history is
 ;; not yet exhausted). Called before the move; `load-more!` keeps the cursor on
 ;; the same commit, so the following move advances into the freshly loaded rows.
-(define (maybe-load-more! state-box)
-  (let ([state (unbox state-box)])
-    (when (and (> (commit-count state) 0)
-           (at-last? state)
-           (not (lv-state-exhausted state)))
-      (load-more! state-box))))
+(define (maybe-load-more! state)
+  (when (and (> (commit-count state) 0)
+         (at-last? state)
+         (not (lv-state-exhausted state)))
+    (load-more! state)))
 
 ;; Re-fetch the log with the current opts, keeping the cursor on the same change
 ;; when it is still listed (a mutation can move or drop it). Clears `exhausted`:
 ;; a refresh or mutation may have grown history, so load-more is worth retrying.
-(define (reload! state-box)
-  (let* ([state (unbox state-box)]
-         [prev (cursor-commit state)]
+(define (reload! state)
+  (let* ([prev (cursor-commit state)]
          [commits (backend-log (lv-state-backend state) #f (lv-state-opts state))])
     (set-lv-state-commits! state commits)
     (set-lv-state-cursor! state (restore-cursor commits prev (lv-state-cursor state)))
@@ -125,9 +110,8 @@
 ;; history: mark `exhausted` and say so. The curated->`::@` jj transition can
 ;; return fewer rows (sibling heads drop out); that is not exhaustion, and a
 ;; dropped-sibling cursor falls back via `restore-cursor`.
-(define (load-more! state-box)
-  (let* ([state (unbox state-box)]
-         [prev (cursor-commit state)]
+(define (load-more! state)
+  (let* ([prev (cursor-commit state)]
          [before (commit-count state)]
          [opts (grow-opts (lv-state-opts state))]
          [commits (backend-log (lv-state-backend state) #f opts)])
@@ -157,17 +141,15 @@
 ;; The standard mutation epilogue: refresh the rows, report `r` on the status
 ;; line (reload! first, so the message survives it), then let juju refresh any
 ;; open status view.
-(define (finish! state-box r)
-  (reload! state-box)
-  (let ([state (unbox state-box)])
-    (set-message! state (result-message r) (result-tag r))
-    ((lv-state-on-change state))))
+(define (finish! state r)
+  (reload! state)
+  (set-message! state (result-message r) (result-tag r))
+  ((lv-state-on-change state)))
 
 ;; Check `cap`, then run `op-fn` (backend, rev-string -> result) on the change
 ;; under the cursor. `noun` completes "no commit to <noun>" on an empty log.
-(define (do-rev-op! state-box cap noun op-fn)
-  (let* ([state (unbox state-box)]
-         [backend (lv-state-backend state)])
+(define (do-rev-op! state cap noun op-fn)
+  (let ([backend (lv-state-backend state)])
     (cond
       [(not (backend-supports? backend cap))
         (set-message! state (unsupported-message backend cap) 'error)]
@@ -175,25 +157,25 @@
         (let ([c (cursor-commit state)])
           (if (not c)
             (set-message! state (string-append "juju: no commit to " noun) 'error)
-            (finish! state-box (op-fn backend (commit-record-id c)))))])))
+            (finish! state (op-fn backend (commit-record-id c)))))])))
 
-(define (do-edit! state-box)
-  (do-rev-op! state-box 'edit "edit" (lambda (b rev) (backend-edit b rev))))
+(define (do-edit! state)
+  (do-rev-op! state 'edit "edit" (lambda (b rev) (backend-edit b rev))))
 
-(define (do-new! state-box)
-  (do-rev-op! state-box 'switch "start a change on"
+(define (do-new! state)
+  (do-rev-op! state 'switch "start a change on"
     (lambda (b rev) (backend-switch b rev))))
 
-(define (do-revert! state-box)
-  (do-rev-op! state-box 'revert "revert"
+(define (do-revert! state)
+  (do-rev-op! state 'revert "revert"
     (lambda (b rev) (backend-revert b rev (hash)))))
 
-(define (do-cherry-pick! state-box)
-  (do-rev-op! state-box 'cherry-pick "cherry-pick"
+(define (do-cherry-pick! state)
+  (do-rev-op! state 'cherry-pick "cherry-pick"
     (lambda (b rev) (backend-cherry-pick b rev (hash)))))
 
-(define (do-rebase-onto! state-box)
-  (do-rev-op! state-box 'rebase "rebase onto"
+(define (do-rebase-onto! state)
+  (do-rev-op! state 'rebase "rebase onto"
     (lambda (b rev) (backend-rebase b (hash 'onto rev)))))
 
 ;; Enter: the commit's diff in a text view stacked above the log.
@@ -222,47 +204,61 @@
     ""
     "Other:     g refresh   q / Esc close"))
 
-;;; Event handling ;;;
+;;; Movement (with pagination) and action keys ;;;
 
-(define (handle-lv state-box event)
+;; Moving down (or paging down) off the last row grows the log first.
+(define (lv-move! state delta)
+  (when (> delta 0) (maybe-load-more! state))
+  (move-cursor! state delta)
+  #t)
+
+(define (lv-edge! state which)
+  (when (eq? which 'bottom) (maybe-load-more! state))
+  (cursor-to! state (if (eq? which 'top) 0 (commit-count state)))
+  #t)
+
+(define (lv-keys state-box event)
   (let ([state (unbox state-box)])
     (cond
-      [(key-event-escape? event) (close-lv) event-result/close]
-      [(char-is? event #\q) (close-lv) event-result/close]
-
-      [(or (key-event-up? event) (char-is? event #\k)) (move-cursor! state -1) event-result/consume]
-      [(or (key-event-down? event) (char-is? event #\j))
-        (maybe-load-more! state-box)
-        (move-cursor! state 1)
-        event-result/consume]
-      [(ctrl-char? event #\u) (move-cursor! state -10) event-result/consume]
-      [(ctrl-char? event #\d)
-        (maybe-load-more! state-box)
-        (move-cursor! state 10)
-        event-result/consume]
-      [(key-event-home? event) (cursor-to! state 0) event-result/consume]
-      [(key-event-end? event)
-        (maybe-load-more! state-box)
-        (cursor-to! state (commit-count state))
-        event-result/consume]
-
       [(key-event-enter? event) (show-at-cursor! state) event-result/consume]
-      [(char-is? event #\e) (do-edit! state-box) event-result/consume]
-      [(char-is? event #\n) (do-new! state-box) event-result/consume]
-      [(char-is? event #\b) (do-new! state-box) event-result/consume]
-      [(char-is? event #\V) (do-revert! state-box) event-result/consume]
-      [(char-is? event #\y) (do-cherry-pick! state-box) event-result/consume]
-      [(char-is? event #\r) (do-rebase-onto! state-box) event-result/consume]
-
-      [(char-is? event #\g)
-        (clear-message! state)
-        (reload! state-box)
-        event-result/consume]
+      [(char-is? event #\e) (do-edit! state) event-result/consume]
+      [(char-is? event #\n) (do-new! state) event-result/consume]
+      [(char-is? event #\b) (do-new! state) event-result/consume]
+      [(char-is? event #\V) (do-revert! state) event-result/consume]
+      [(char-is? event #\y) (do-cherry-pick! state) event-result/consume]
+      [(char-is? event #\r) (do-rebase-onto! state) event-result/consume]
+      [(char-is? event #\g) (clear-message! state) (reload! state) event-result/consume]
       [(char-is? event #\?) (show-text-view "juju log keys" (help-lines)) event-result/consume]
+      [else #f])))
 
-      [else event-result/consume])))
-
-(define (close-lv) (pop-last-component-by-name! COMPONENT-NAME))
+(define log-view-spec
+  (make-overlay-view
+    #:name
+    "juju-log-view"
+    #:title
+    lv-title
+    #:rows
+    (lambda (state) (log-rows (lv-state-commits state)))
+    #:cursor
+    lv-state-cursor
+    #:set-cursor!
+    set-lv-state-cursor!
+    #:top
+    lv-state-top
+    #:set-top!
+    set-lv-state-top!
+    #:status
+    lv-status
+    #:on-key
+    lv-keys
+    #:move!
+    lv-move!
+    #:edge!
+    lv-edge!
+    #:tag->style
+    juju-tag->style
+    #:overlay-scale
+    (lambda () (juju-overlay-scale))))
 
 ;;@doc
 ;; Open the interactive log view on `backend` with `opts` (a backend-log opts
@@ -272,11 +268,5 @@
   (let ([commits (backend-log backend #f opts)])
     (if (null? commits)
       (set-status! "juju: nothing to show (log)")
-      (let* ([state-box (box (lv-state backend opts commits 0 0 "" 'info #f on-change))]
-             [handlers (hash "handle_event" handle-lv
-                        "cursor"
-                        (lambda (state-box rect) #f)
-                        "required_size"
-                        (lambda (state-box size) size))]
-             [component (new-component! COMPONENT-NAME state-box render-lv handlers)])
-        (push-component! component)))))
+      (open-overlay-view! log-view-spec
+        (lv-state backend opts commits 0 0 "" 'info #f on-change)))))

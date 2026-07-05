@@ -13,7 +13,7 @@
 ;;; (binary marker, rename headers) the renderer labels and partial-hunk staging
 ;;; must refuse. Pure functions: text in, structs out.
 
-(require "string-utils.scm")
+(require "ui-utils.hx/strings.scm")
 (require "model.scm")
 
 (provide parse-unified-diff

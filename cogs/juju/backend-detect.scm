@@ -17,6 +17,7 @@
 (require "backend-interface.scm")
 (require "config.scm")
 (require "string-utils.scm")
+(require "ui-utils.hx/strings.scm")
 
 (provide workspace-root-from
   detect-backend-name

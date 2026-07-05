@@ -7,7 +7,7 @@
 
 ;;; rebase-view.scm - the interactive rebase editor component
 ;;;
-;;; A read-only-style overlay (the same shell as text-view / status-view) for
+;;; A read-only-style overlay (the shared overlay-view shell, ui-utils.hx) for
 ;;; editing a rebase plan: a list of commits, each assignable an action and
 ;;; reorderable, in Helix's selection-first style. It owns its keys and never
 ;;; touches an editor buffer. It is backend-agnostic: like the transient menu,
@@ -19,10 +19,10 @@
 (require "helix/misc.scm")
 (require "model.scm")
 (require "rebase-todo.scm")
-(require "render.scm")
-(require "scroll.scm")
-(require "keys.scm")
-(require "string-utils.scm")
+(require "render.scm") ; juju-tag->style
+(require "ui-utils.hx/keys.scm")
+(require "ui-utils.hx/strings.scm")
+(require "ui-utils.hx/overlay-view.scm")
 
 (provide open-rebase-view)
 
@@ -35,26 +35,12 @@
   #:mutable
   #:transparent)
 
-;;; Rendering ;;;
-
-(define (render-rv state-box rect buffer)
-  (let* ([state (unbox state-box)]
-         [content (draw-frame buffer (overlay-area rect) "Interactive rebase")]
-         [rows (todo-rows (rv-state-entries state)
-                (rv-state-cursor state)
-                (rv-state-selection state))]
-         [height (visible-row-count content)]
-         [top (clamp-top (rv-state-top state) (rv-state-cursor state) height (length rows))])
-    (set-rv-state-top! state top)
-    (draw-rows buffer content rows (rv-state-cursor state) top (rv-state-selection state))
-    (draw-status-line buffer content (status-text state) (rv-state-message-tag state))))
-
 (define LEGEND
   "j/k move  J/K reorder  p r e s f d set  v mark  Enter apply  q quit")
 
-(define (status-text state)
+(define (rv-status state)
   (let ([m (rv-state-message state)])
-    (if (string=? m "") LEGEND m)))
+    (cons (if (string=? m "") LEGEND m) (rv-state-message-tag state))))
 
 ;;; State edits ;;;
 
@@ -65,11 +51,6 @@
 (define (clear-message! state) (set-message! state "" 'info))
 
 (define (entry-count state) (length (rv-state-entries state)))
-
-(define (move-cursor! state delta)
-  (let ([n (entry-count state)] [c (+ (rv-state-cursor state) delta)])
-    (when (> n 0)
-      (set-rv-state-cursor! state (max 0 (min c (- n 1)))))))
 
 (define (cursor-to! state idx)
   (let ([n (entry-count state)])
@@ -106,9 +87,10 @@
     (set-rv-state-selection! state '())
     (cursor-to! state (if (eq? dir 'up) (- c 1) (+ c 1)))))
 
-(define (apply-rebase! state-box)
-  (let* ([state (unbox state-box)]
-         [entries (rv-state-entries state)]
+(define (close-rebase-view) (pop-last-component-by-name! COMPONENT-NAME))
+
+(define (apply-rebase! state)
+  (let* ([entries (rv-state-entries state)]
          [invalid (todo-validate entries)])
     (if invalid
       (set-message! state invalid 'error)
@@ -140,40 +122,54 @@
               (collect-rewords next (cdr rewords) on-apply)))))
       #t)))
 
-;;; Event handling ;;;
+;;; Action keys (the shell handles movement and close) ;;;
 
-(define (handle-rv state-box event)
+(define (rv-keys state-box event)
   (let ([state (unbox state-box)])
     (cond
-      [(key-event-escape? event) (close-rebase-view) event-result/close]
-      [(char-is? event #\q) (close-rebase-view) event-result/close]
-
-      [(or (key-event-up? event) (char-is? event #\k)) (move-cursor! state -1) event-result/consume]
-      [(or (key-event-down? event) (char-is? event #\j)) (move-cursor! state 1) event-result/consume]
-      [(ctrl-char? event #\u) (move-cursor! state -8) event-result/consume]
-      [(ctrl-char? event #\d) (move-cursor! state 8) event-result/consume]
-      [(key-event-home? event) (cursor-to! state 0) event-result/consume]
-      [(key-event-end? event) (cursor-to! state (entry-count state)) event-result/consume]
-
-      ;; Reorder.
       [(char-is? event #\K) (move-entry! state 'up) event-result/consume]
       [(char-is? event #\J) (move-entry! state 'down) event-result/consume]
-
-      ;; Assign an action (selection-first).
       [(char-is? event #\p) (set-action! state 'pick) event-result/consume]
       [(char-is? event #\r) (set-action! state 'reword) event-result/consume]
       [(char-is? event #\e) (set-action! state 'edit) event-result/consume]
       [(char-is? event #\s) (set-action! state 'squash) event-result/consume]
       [(char-is? event #\f) (set-action! state 'fixup) event-result/consume]
       [(char-is? event #\d) (set-action! state 'drop) event-result/consume]
-
       [(char-is? event #\v) (toggle-mark! state) event-result/consume]
+      [(key-event-enter? event) (apply-rebase! state) event-result/consume]
+      [else #f])))
 
-      [(key-event-enter? event) (apply-rebase! state-box) event-result/consume]
-
-      [else event-result/consume])))
-
-(define (close-rebase-view) (pop-last-component-by-name! COMPONENT-NAME))
+(define rebase-view-spec
+  (make-overlay-view
+    #:name
+    COMPONENT-NAME
+    #:title
+    (lambda (state) "Interactive rebase")
+    #:rows
+    (lambda (state)
+      (todo-rows (rv-state-entries state)
+        (rv-state-cursor state)
+        (rv-state-selection state)))
+    #:cursor
+    rv-state-cursor
+    #:set-cursor!
+    set-rv-state-cursor!
+    #:top
+    rv-state-top
+    #:set-top!
+    set-rv-state-top!
+    #:status
+    rv-status
+    #:marked
+    rv-state-selection
+    #:on-key
+    rv-keys
+    #:page-size
+    8
+    #:tag->style
+    juju-tag->style
+    #:overlay-scale
+    (lambda () (juju-overlay-scale))))
 
 ;;@doc
 ;; Open the interactive rebase editor over `entries` (a todo-entry list, oldest
@@ -182,11 +178,5 @@
 (define (open-rebase-view entries on-apply)
   (if (null? entries)
     (set-status! "juju: no commits to rebase in range")
-    (let* ([state-box (box (rv-state entries 0 0 '() "" 'info on-apply))]
-           [handlers (hash "handle_event" handle-rv
-                      "cursor"
-                      (lambda (state-box rect) #f)
-                      "required_size"
-                      (lambda (state-box size) size))]
-           [component (new-component! COMPONENT-NAME state-box render-rv handlers)])
-      (push-component! component))))
+    (open-overlay-view! rebase-view-spec
+      (rv-state entries 0 0 '() "" 'info on-apply))))

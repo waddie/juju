@@ -30,7 +30,7 @@
 
 (require "view-rows.scm")
 (require "model.scm")
-(require "string-utils.scm")
+(require "ui-utils.hx/strings.scm")
 
 (provide resolve-operands
   resolve-revs)
