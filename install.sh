@@ -46,6 +46,33 @@ else
     success "ui-utils.hx already installed"
 fi
 
+# juju also requires the shared run-command library (the spawn/capture core
+# behind run-vcs); its module must be in ~/.steel/cogs/run-command/ or juju
+# fails to load. It ships no install.sh, so copy its files into place. Install
+# from a sibling checkout (override with RUN_COMMAND_DIR), else a shallow clone.
+# The destination directory is `run-command` (the require path), not the repo
+# name `run-command.scm`.
+if [ ! -d "$HOME/.steel/cogs/run-command" ]; then
+    RUN_COMMAND_DIR="${RUN_COMMAND_DIR:-../run-command.scm}"
+    if [ -d "$RUN_COMMAND_DIR" ]; then
+        info "Installing run-command from $RUN_COMMAND_DIR..."
+        SRC="$RUN_COMMAND_DIR"
+    else
+        TMP_DIR=$(mktemp -d)
+        info "Cloning run-command..."
+        git clone --depth 1 https://github.com/waddie/run-command.scm "$TMP_DIR/run-command.scm" >/dev/null 2>&1 \
+            || error "run-command is not installed and could not be cloned. Set RUN_COMMAND_DIR to a checkout and re-run."
+        SRC="$TMP_DIR/run-command.scm"
+    fi
+    mkdir -p "$HOME/.steel/cogs/run-command"
+    cp "$SRC/run-command.scm" "$SRC/cog.scm" "$HOME/.steel/cogs/run-command/"
+    [ -n "${TMP_DIR:-}" ] && rm -rf "$TMP_DIR"
+    unset TMP_DIR
+    success "Installed run-command"
+else
+    success "run-command already installed"
+fi
+
 info "Installing into $DEST..."
 mkdir -p "$DEST/cogs"
 cp juju.scm "$DEST/"

@@ -18,15 +18,22 @@
 ;;; Forge copies this directory to ~/.steel/cogs/juju/.
 
 (define package-name 'juju)
-(define version "0.3.4-alpha")
+(define version "0.3.5-alpha")
 
-;; The shared UI library (overlay shell, drawing, string/scroll helpers).
-;; Forge installs it to ~/.steel/cogs/ui-utils.hx/ alongside juju; install.sh
-;; does the same by hand. One installed copy serves every plugin that depends
-;; on it, so upgrade dependent plugins together.
+;; Shared library dependencies, installed to ~/.steel/cogs/<name>/ alongside
+;; juju (Forge does this; install.sh does the same by hand). One installed copy
+;; serves every plugin that depends on it, so upgrade dependent plugins
+;; together.
+;;   ui-utils.hx  - overlay shell, drawing, string/scroll helpers.
+;;   run-command  - the spawn/capture core behind process.scm's run-vcs.
 (define dependencies
   '((#:name "ui-utils.hx"
      #:git-url
      "https://github.com/waddie/ui-utils.hx"
      #:sha
-     "2998d8229330e433e483745fc8750702b8d134e4")))
+     "2998d8229330e433e483745fc8750702b8d134e4")
+    (#:name "run-command"
+     #:git-url
+     "https://github.com/waddie/run-command.scm"
+     #:sha
+     "ed42a376c4761e10530981c34797e7dde8e5abef")))

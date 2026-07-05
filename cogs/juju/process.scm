@@ -15,9 +15,16 @@
 ;;;     and instructions always supplied non-interactively by callers);
 ;;;   - returns a uniform data hash. Parsers turn that into structs; nothing
 ;;;     downstream ever sees a live process or raw terminal.
+;;;
+;;; The spawn/capture core (build a command, feed stdin, drain stdout and
+;;; stderr concurrently, reap, return errors as data) lives in the shared
+;;; `run-command` cog. This module is the juju-specific adapter over its
+;;; `run-argv`: it supplies the workspace-root flags and the forced
+;;; non-interactive environment, and re-exports the `run-vcs` surface the rest
+;;; of the codebase calls.
 
-(require "steel/result")
 (require-builtin steel/process)
+(require "run-command/run-command.scm")
 (require "string-utils.scm")
 (require "ui-utils.hx/strings.scm")
 
@@ -38,25 +45,35 @@
 ;;   GIT_TERMINAL_PROMPT 0      - git fails instead of prompting for credentials
 ;;   GIT_EDITOR / EDITOR true   - any stray editor invocation exits cleanly
 ;;   GIT_OPTIONAL_LOCKS 0       - status never blocks on the index lock
-;;   JJ_CONFIG-less paging      - jj paging disabled via --config below
-(define (apply-non-interactive-env! cmd)
-  (set-env-var! cmd "GIT_PAGER" "cat")
-  (set-env-var! cmd "PAGER" "cat")
-  (set-env-var! cmd "GIT_TERMINAL_PROMPT" "0")
-  (set-env-var! cmd "GIT_EDITOR" "true")
-  (set-env-var! cmd "EDITOR" "true")
-  (set-env-var! cmd "GIT_OPTIONAL_LOCKS" "0")
-  (set-env-var! cmd "CLICOLOR" "0")
-  (set-env-var! cmd "NO_COLOR" "1")
-  cmd)
+;;   CLICOLOR 0 / NO_COLOR 1    - stable, uncoloured output
+;; (jj paging is disabled via the --no-pager flag in `root-args`.)
+(define non-interactive-env
+  (hash "GIT_PAGER" "cat"
+    "PAGER"
+    "cat"
+    "GIT_TERMINAL_PROMPT"
+    "0"
+    "GIT_EDITOR"
+    "true"
+    "EDITOR"
+    "true"
+    "GIT_OPTIONAL_LOCKS"
+    "0"
+    "CLICOLOR"
+    "0"
+    "NO_COLOR"
+    "1"))
 
-;; Apply caller env overrides on top of the non-interactive defaults. The only
-;; current user is the interactive-rebase reword path, which must point
-;; GIT_EDITOR at a message-feeding helper (the default forces it to `true`).
-(define (apply-env-overrides! cmd env)
-  (when (hash? env)
-    (for-each (lambda (k) (set-env-var! cmd k (hash-ref env k))) (hash-keys->list env)))
-  cmd)
+;; Overlay caller env overrides on top of the non-interactive defaults,
+;; returning a new hash. The only current override is the interactive-rebase
+;; reword path, which must point GIT_EDITOR at a message-feeding helper (the
+;; default forces it to `true`).
+(define (merge-env env)
+  (if (hash? env)
+    (foldl (lambda (k acc) (hash-insert acc k (hash-ref env k)))
+      non-interactive-env
+      (hash-keys->list env))
+    non-interactive-env))
 
 ;; Per-backend leading args: the workspace-root flag plus paging/colour off.
 ;; `git -C <root> --no-pager -c color.ui=never`; `jj -R <root> --no-pager
@@ -96,56 +113,18 @@
 (define (run-vcs-env root program args env)
   (run-vcs* root program args #f env))
 
-;; Core spawn/capture. When `input` is a string it is written to the child's
-;; stdin and the stream closed; when #f stdin is left unwritten (it closes on
-;; drop, giving the child EOF, so nothing blocks reading the tty).
+;; Core spawn/capture, delegated to the shared `run-command` cog. The
+;; workspace-root flags are prepended to the caller's args, and the caller's
+;; env overrides are overlaid on the forced non-interactive defaults. `run-argv`
+;; runs the program directly (no shell), feeds `input` to stdin only when it is
+;; a string (matching the old "leave stdin unwritten on #f" behaviour), drains
+;; stdout and stderr concurrently, reaps the child, and returns errors as data.
+;; Its result hash carries an extra 'timed-out key (always #f here, since juju
+;; sets no timeout); the accessors below ignore it.
 (define (run-vcs* root program args input env)
-  (with-handler
-    (lambda (err)
-      (hash 'stdout "" 'stderr (to-string err) 'exit #f 'ok #f))
-    (let* ([full-args (append (root-args program root) args)]
-           [cmd (command program full-args)])
-      (apply-non-interactive-env! cmd)
-      (apply-env-overrides! cmd env)
-      ;; Pipe stdout, stderr, and stdin.
-      (set-piped-stdout! cmd)
-      (let ([spawn-result (spawn-process cmd)])
-        (if (Err? spawn-result)
-          (hash 'stdout "" 'stderr (to-string (Err->value spawn-result)) 'exit #f 'ok #f)
-          (let* ([child (Ok->value spawn-result)]
-                 ;; Feed stdin first (and close it) so a command reading a patch
-                 ;; from `-` sees EOF and proceeds before we drain stdout.
-                 [_ (when (string? input)
-                     (let ([sin (child-stdin child)])
-                       (when sin
-                         (display input sin)
-                         (close-output-port sin))))]
-                 ;; Drain stdout and stderr concurrently on native threads.
-                 ;; Each reader returns on its pipe's EOF, so neither can wedge
-                 ;; the other by filling its pipe while we block on the far
-                 ;; stream. Reap only once both pipes have closed.
-                 [out-box (box "")]
-                 [err-box (box "")]
-                 [out-t (spawn-native-thread
-                         (lambda ()
-                           (set-box! out-box
-                             (read-port-to-string (child-stdout child)))))]
-                 [err-t (spawn-native-thread
-                         (lambda ()
-                           (set-box! err-box
-                             (let ([e (child-stderr child)])
-                               (if e (read-port-to-string e) "")))))]
-                 [_ (thread-join! out-t)]
-                 [_ (thread-join! err-t)]
-                 [wait-result (wait child)]
-                 [exit (if (Ok? wait-result) (Ok->value wait-result) #f)])
-            (hash 'stdout (unbox out-box)
-              'stderr
-              (unbox err-box)
-              'exit
-              exit
-              'ok
-              (equal? exit 0))))))))
+  (run-argv program
+    (append (root-args program root) args)
+    (hash 'env (merge-env env) 'stdin input)))
 
 ;;@doc
 ;; As `run-vcs`, but returns the captured stdout split into a list of lines

@@ -8,4 +8,8 @@ if [ ! -d "$HOME/.steel/cogs/ui-utils.hx" ]; then
     echo "ui-utils.hx is not installed; run its install.sh first (e.g. ../ui-utils.hx/install.sh)" >&2
     exit 1
 fi
+if [ ! -d "$HOME/.steel/cogs/run-command" ]; then
+    echo "run-command is not installed; run juju's install.sh first (it installs run-command)" >&2
+    exit 1
+fi
 steel < tests/parser-tests.scm
