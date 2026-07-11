@@ -26,6 +26,17 @@
   parse-stash-line
   parse-git-blame-porcelain)
 
+;; map via an explicit loop. map with a struct-valued callback
+;; (make-file-item / make-commit-record) can crash Helix's Steel outright
+;; under a full plugin module graph; it crashed nrepl.hx jack-in on
+;; 2026-07-11 after small repros passed, so a passing test proves nothing.
+;; Use map-list for every git-data list built here.
+(define (map-list f xs)
+  (let loop ([rest xs] [acc '()])
+    (if (null? rest)
+      (reverse acc)
+      (loop (cdr rest) (cons (f (car rest)) acc)))))
+
 ;; Features the Git model supports. No 'redo/'squash/'split/'abandon/'describe/
 ;; 'oplog: those are jj-only (git's squash is interactive rebase, not a single
 ;; op). 'undo is best-effort here: git has no first-class undo, so it reverses
@@ -123,13 +134,13 @@
          [recent (git-log* root #f (hash 'limit (juju-recent-count)))])
     (append
       (maybe-section "untracked" "Untracked files" 'untracked
-        (map (lambda (f) (file-from-status f 'untracked)) untracked))
+        (map-list (lambda (f) (file-from-status f 'untracked)) untracked))
       (maybe-section "unstaged" "Unstaged changes" 'unstaged
-        (map (lambda (f) (file-from-status f 'unstaged)) unstaged))
+        (map-list (lambda (f) (file-from-status f 'unstaged)) unstaged))
       (maybe-section "staged" "Staged changes" 'staged
-        (map (lambda (f) (file-from-status f 'staged)) staged))
+        (map-list (lambda (f) (file-from-status f 'staged)) staged))
       (maybe-section "conflicts" "Conflicts" 'conflicts
-        (map (lambda (f) (file-from-status f 'conflict)) conflicts))
+        (map-list (lambda (f) (file-from-status f 'conflict)) conflicts))
       (maybe-section "stashes" "Stashes" 'stashes stashes)
       (if (and upstream (> ahead 0))
         (maybe-section "unpushed" (string-append "Unpushed to " upstream) 'unpushed
@@ -283,7 +294,7 @@
 ;; stable id stash-pop/apply/drop need; the rest is the human subject.
 (define (git-stash-list root)
   (let ([lines (run-vcs-lines root "git" (list "stash" "list"))])
-    (map parse-stash-line lines)))
+    (map-list parse-stash-line lines)))
 
 (define (parse-stash-line line)
   (let ([idx (find-substring line ": ")])
@@ -359,9 +370,9 @@
 ;; Records are terminated by RECORD-SEP (0x1e) and may be newline-separated.
 (define (parse-log-records text)
   (let* ([records (split-many text (string (integer->char 30)))]
-         [trimmed (map (lambda (r) (trim-start r)) records)]
+         [trimmed (map-list (lambda (r) (trim-start r)) records)]
          [non-empty (filter (lambda (r) (not (string=? (string-trim r) ""))) trimmed)])
-    (map parse-log-record non-empty)))
+    (map-list parse-log-record non-empty)))
 
 (define (parse-log-record rec)
   (let* ([fields (field-split rec)]
@@ -373,7 +384,7 @@
 (define (parse-refs s)
   (if (string=? (string-trim s) "")
     '()
-    (map string-trim (split-many s ","))))
+    (map-list string-trim (split-many s ","))))
 
 ;;; Show ;;;
 

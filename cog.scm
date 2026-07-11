@@ -18,7 +18,7 @@
 ;;; Forge copies this directory to ~/.steel/cogs/juju/.
 
 (define package-name 'juju)
-(define version "0.3.6-alpha")
+(define version "0.3.7-alpha")
 
 ;; Shared library dependencies, installed to ~/.steel/cogs/<name>/ alongside
 ;; juju (Forge does this; install.sh does the same by hand). One installed copy
