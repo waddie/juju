@@ -77,16 +77,19 @@
 ;; root path -> 'git | 'jj override chosen via :juju-backend.
 (define *overrides* (box (hash)))
 
-;;@doc Backend override for `root`, or #f if none set.
+;;@doc
+;; Backend override for `root`, or #f if none set.
 (define (workspace-backend-override root)
   (let ([h (unbox *overrides*)])
     (if (hash-contains? h root) (hash-ref h root) #f)))
 
-;;@doc Remember that `root` should use `backend-sym` ('git | 'jj).
+;;@doc
+;; Remember that `root` should use `backend-sym` ('git | 'jj).
 (define (set-workspace-backend-override! root backend-sym)
   (set-box! *overrides* (hash-insert (unbox *overrides*) root backend-sym)))
 
-;;@doc Forget any override for `root`.
+;;@doc
+;; Forget any override for `root`.
 (define (clear-workspace-backend-override! root)
   (let ([h (unbox *overrides*)])
     (when (hash-contains? h root)

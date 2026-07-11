@@ -94,7 +94,8 @@
     (workspace-backend-override root)
     (juju-colocated-default)))
 
-;;@doc Construct the backend named `name` ('git | 'jj) for `root`, or #f.
+;;@doc
+;; Construct the backend named `name` ('git | 'jj) for `root`, or #f.
 (define (make-backend-named name root)
   (cond
     [(eq? name 'git) (make-git-backend root)]

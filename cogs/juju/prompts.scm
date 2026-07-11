@@ -16,11 +16,13 @@
 (provide editor-cwd
   current-file-path)
 
-;;@doc The editor's working directory, or #f if unavailable.
+;;@doc
+;; The editor's working directory, or #f if unavailable.
 (define (editor-cwd)
   (with-handler (lambda (err) #f) (helix.static.get-helix-cwd)))
 
-;;@doc Absolute path of the focused document, or #f when none (e.g. a scratch).
+;;@doc
+;; Absolute path of the focused document, or #f when none (e.g. a scratch).
 (define (current-file-path)
   (with-handler (lambda (err) #f)
     (let* ([focus (editor-focus)]

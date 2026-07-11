@@ -684,7 +684,8 @@
 
 ;;; Constructor (defined last; see backend-git for the Steel ordering note) ;;;
 
-;;@doc Build a jj backend rooted at `root`. Mutations are dispatched through
+;;@doc
+;; Build a jj backend rooted at `root`. Mutations are dispatched through
 ;; `jj-mutate`.
 (define (make-jj-backend root)
   (make-backend 'jj root jj-capabilities

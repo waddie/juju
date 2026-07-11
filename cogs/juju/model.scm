@@ -187,11 +187,13 @@
 (define (fold-set! fold key value)
   (set-box! fold (hash-insert (unbox fold) key value)))
 
-;;@doc #t when the section for `kind` is collapsed (default #f).
+;;@doc
+;; #t when the section for `kind` is collapsed (default #f).
 (define (fold-section-collapsed? fold kind)
   (fold-get fold (section-fold-key kind) #f))
 
-;;@doc #t when the file at `path` under `section-kind` is expanded (default #f).
+;;@doc
+;; #t when the file at `path` under `section-kind` is expanded (default #f).
 (define (fold-file-expanded? fold section-kind path)
   (fold-get fold (file-fold-key section-kind path) #f))
 
@@ -232,7 +234,8 @@
         (section-items sec))
       (fold-section-collapsed? fold kind))))
 
-;;@doc First section whose kind is `kind`, or #f.
+;;@doc
+;; First section whose kind is `kind`, or #f.
 (define (section-by-kind st kind)
   (let loop ([secs (status-sections st)])
     (cond
@@ -240,7 +243,8 @@
       [(eq? (section-kind (car secs)) kind) (car secs)]
       [else (loop (cdr secs))])))
 
-;;@doc Total count of file-items across all sections.
+;;@doc
+;; Total count of file-items across all sections.
 (define (status-file-count st)
   (foldl (lambda (sec acc)
           (+ acc (length (filter file-item? (section-items sec)))))

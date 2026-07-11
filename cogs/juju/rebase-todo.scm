@@ -57,24 +57,28 @@
 
 ;;; Pure edits (each returns a new entry list) ;;;
 
-;;@doc Replace the action of the entry at `idx`, keeping its message.
+;;@doc
+;; Replace the action of the entry at `idx`, keeping its message.
 (define (todo-set-action entries idx action)
   (if (index-ok? entries idx)
     (let ([e (list-ref entries idx)])
       (list-set entries idx (todo-entry (todo-entry-commit e) action (todo-entry-message e))))
     entries))
 
-;;@doc Set the reword `message` of the entry at `idx`, leaving its action.
+;;@doc
+;; Set the reword `message` of the entry at `idx`, leaving its action.
 (define (todo-set-message entries idx message)
   (if (index-ok? entries idx)
     (let ([e (list-ref entries idx)])
       (list-set entries idx (todo-entry (todo-entry-commit e) (todo-entry-action e) message)))
     entries))
 
-;;@doc Swap the entry at `idx` with the one above it (no-op at the top).
+;;@doc
+;; Swap the entry at `idx` with the one above it (no-op at the top).
 (define (todo-move-up entries idx) (list-swap entries idx (- idx 1)))
 
-;;@doc Swap the entry at `idx` with the one below it (no-op at the bottom).
+;;@doc
+;; Swap the entry at `idx` with the one below it (no-op at the bottom).
 (define (todo-move-down entries idx) (list-swap entries idx (+ idx 1)))
 
 ;;; Validation ;;;
@@ -125,7 +129,8 @@
 ;;; order, then the working copy is parked on the edit target. Each step is the
 ;;; argument list passed to `run-vcs` after the leading root args.
 
-;;@doc Ordered list of jj argument-lists realising `entries`.
+;;@doc
+;; Ordered list of jj argument-lists realising `entries`.
 (define (todo->jj-steps entries)
   (append
     (jj-fold-steps entries)

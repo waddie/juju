@@ -33,7 +33,8 @@
   (let ([c (ui.color-for-name (juju-section-color))])
     (style-with-bold (if c (style-fg (style) c) (style)))))
 
-;;@doc juju's tag->style: the shared default table with the 'section override.
+;;@doc
+;; juju's tag->style: the shared default table with the 'section override.
 (define juju-tag->style (ui.make-tag->style (hash 'section section-style)))
 
 ;;@doc
@@ -46,7 +47,8 @@
 (define (draw-frame buffer rect title)
   (ui.draw-frame buffer rect title juju-tag->style))
 
-;;@doc Rows that fit in `area`, reserving the last line for the status line.
+;;@doc
+;; Rows that fit in `area`, reserving the last line for the status line.
 (define (visible-row-count area)
   (ui.visible-row-count area))
 
@@ -58,6 +60,7 @@
     (if (pair? opt) (car opt) '())
     juju-tag->style))
 
-;;@doc Draw `text` on the bottom line of `area`, styled by `tag`.
+;;@doc
+;; Draw `text` on the bottom line of `area`, styled by `tag`.
 (define (draw-status-line buffer area text tag)
   (ui.draw-status-line buffer area text tag juju-tag->style))

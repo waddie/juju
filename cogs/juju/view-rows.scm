@@ -79,7 +79,8 @@
 (define (row-body-line-index r)
   (if (hash-contains? r 'body-line-index) (hash-ref r 'body-line-index) #f))
 
-;;@doc Cache key for a file's fetched diff: section kind + path.
+;;@doc
+;; Cache key for a file's fetched diff: section kind + path.
 (define (diff-cache-key section-kind path)
   (string-append (symbol->string section-kind) ":" path))
 
@@ -242,7 +243,8 @@
 ;;; section-jump and in-buffer search. Indices are positions in the row list, so
 ;;; the caller can drop the result straight into the cursor.
 
-;;@doc The indices of the section-header rows in `rows`.
+;;@doc
+;; The indices of the section-header rows in `rows`.
 (define (section-row-indices rows)
   (let loop ([rs rows] [i 0] [acc '()])
     (cond
@@ -250,7 +252,8 @@
       [(eq? (row-type (car rs)) 'section) (loop (cdr rs) (+ i 1) (cons i acc))]
       [else (loop (cdr rs) (+ i 1) acc)])))
 
-;;@doc The nearest section-header index after `from`, or `from` when none (no wrap).
+;;@doc
+;; The nearest section-header index after `from`, or `from` when none (no wrap).
 (define (next-section-index rows from)
   (let loop ([is (section-row-indices rows)])
     (cond
@@ -258,7 +261,8 @@
       [(> (car is) from) (car is)]
       [else (loop (cdr is))])))
 
-;;@doc The nearest section-header index before `from`, or `from` when none (no wrap).
+;;@doc
+;; The nearest section-header index before `from`, or `from` when none (no wrap).
 (define (prev-section-index rows from)
   (let loop ([is (reverse (section-row-indices rows))])
     (cond

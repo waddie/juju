@@ -132,7 +132,8 @@
 (define (run-vcs-lines root program args)
   (split-lines (vcs-stdout (run-vcs root program args))))
 
-;;@doc Accessors for a run-vcs result hash.
+;;@doc
+;; Accessors for a run-vcs result hash.
 (define (vcs-ok? r) (hash-ref r 'ok))
 (define (vcs-stdout r) (hash-ref r 'stdout))
 (define (vcs-stderr r) (hash-ref r 'stderr))

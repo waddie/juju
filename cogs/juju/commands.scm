@@ -110,14 +110,16 @@
         (if b b
           (begin (set-status! "juju: not inside a git or jj repository") #f))))))
 
-;;@doc Open the status view for the current workspace.
+;;@doc
+;; Open the status view for the current workspace.
 (define (juju-status)
   (let ([cwd (editor-cwd)])
     (if cwd
       (open-status-view cwd)
       (set-status! "juju: cannot determine working directory"))))
 
-;;@doc Show the recent log of the current workspace in an interactive overlay.
+;;@doc
+;; Show the recent log of the current workspace in an interactive overlay.
 (define (juju-log)
   (let ([b (resolve-backend)])
     (when b (open-log-for b (juju-log-count)))))
@@ -130,7 +132,8 @@
   (open-log-view b (hash-insert (hash 'limit limit) 'page limit)
     (lambda () (when (juju-auto-refresh) (refresh-open-view!)))))
 
-;;@doc Show the workspace diff (changes against HEAD / the working copy).
+;;@doc
+;; Show the workspace diff (changes against HEAD / the working copy).
 (define (juju-diff)
   (let ([b (resolve-backend)])
     (when b
@@ -213,19 +216,22 @@
 ;;; discard) or the whole workspace (the rest). They run synchronously, echo the
 ;;; result, and refresh an open status view (see `report`).
 
-;;@doc Stage the current file's changes.
+;;@doc
+;; Stage the current file's changes.
 (define (juju-stage)
   (with-current-file-spec 'stage '(untracked unstaged conflicts)
     "juju: current file has no unstaged changes"
     (lambda (b spec) (report (backend-stage b (list spec))))))
 
-;;@doc Unstage the current file's changes (git only).
+;;@doc
+;; Unstage the current file's changes (git only).
 (define (juju-unstage)
   (with-current-file-spec 'unstage '(staged)
     "juju: current file has no staged changes"
     (lambda (b spec) (report (backend-unstage b (list spec))))))
 
-;;@doc Discard the current file's changes (confirms first).
+;;@doc
+;; Discard the current file's changes (confirms first).
 (define (juju-discard)
   (with-current-file-spec 'discard '(untracked unstaged staged working-copy)
     "juju: current file has no changes to discard"
@@ -237,20 +243,25 @@
           (lambda (input)
             (when (confirmed? input) (report (backend-discard b (list spec))))))))))
 
-;;@doc Stage every change in the workspace (git only).
+;;@doc
+;; Stage every change in the workspace (git only).
 (define (juju-stage-all) (bulk 'stage-all (lambda (b) (backend-stage-all b))))
 
-;;@doc Unstage every change in the workspace (git only).
+;;@doc
+;; Unstage every change in the workspace (git only).
 (define (juju-unstage-all) (bulk 'unstage-all (lambda (b) (backend-unstage-all b))))
 
-;;@doc Commit. With arguments, they form the message; otherwise prompts.
+;;@doc
+;; Commit. With arguments, they form the message; otherwise prompts.
 (define (juju-commit . args) (commit-command args #f))
 
-;;@doc Amend the latest commit. With arguments they replace the message;
+;;@doc
+;; Amend the latest commit. With arguments they replace the message;
 ;; otherwise prompts (an empty message keeps the existing one).
 (define (juju-amend . args) (commit-command args #t))
 
-;;@doc Record a fixup! commit (git) / squash into a change (jj): needs a rev.
+;;@doc
+;; Record a fixup! commit (git) / squash into a change (jj): needs a rev.
 (define (juju-commit-fixup . args)
   (let ([b (resolve-backend)])
     (when b
@@ -258,23 +269,29 @@
         (set-status! "juju: usage - :juju-commit-fixup <rev>")
         (report (backend-commit-fixup b (to-string (car args)) (hash)))))))
 
-;;@doc Fold the working changes into the latest commit, message unchanged.
+;;@doc
+;; Fold the working changes into the latest commit, message unchanged.
 (define (juju-extend)
   (let ([b (resolve-backend)]) (when b (report (backend-extend b (hash))))))
 
-;;@doc Fetch from a remote (optional remote name argument).
+;;@doc
+;; Fetch from a remote (optional remote name argument).
 (define (juju-fetch . args) (network-command 'fetch args))
 
-;;@doc Pull/integrate from a remote (optional remote name argument).
+;;@doc
+;; Pull/integrate from a remote (optional remote name argument).
 (define (juju-pull . args) (network-command 'pull args))
 
-;;@doc Push to a remote (optional remote name argument).
+;;@doc
+;; Push to a remote (optional remote name argument).
 (define (juju-push . args) (network-command 'push args))
 
-;;@doc Undo the last operation (jj: `jj undo`; git: best-effort via the reflog).
+;;@doc
+;; Undo the last operation (jj: `jj undo`; git: best-effort via the reflog).
 (define (juju-undo) (bulk 'undo (lambda (b) (backend-undo b))))
 
-;;@doc Redo the last undone operation (jj only).
+;;@doc
+;; Redo the last undone operation (jj only).
 (define (juju-redo) (bulk 'redo (lambda (b) (backend-redo b))))
 
 ;;; History rewriting (typed commands) ;;;
@@ -285,7 +302,8 @@
 ;;; squash/split/abandon/describe/rebase/revert on jj), so a command the active
 ;;; backend lacks reports "not supported" rather than acting.
 
-;;@doc Rebase onto a ref: :juju-rebase [--autosquash] <ref>.
+;;@doc
+;; Rebase onto a ref: :juju-rebase [--autosquash] <ref>.
 (define (juju-rebase . args)
   (with-cap 'rebase
     (lambda (b)
@@ -314,19 +332,23 @@
   (lambda (entries)
     (report (backend-rebase-interactive b (hash 'entries entries 'base base)))))
 
-;;@doc Continue a paused rebase after resolving an edit/conflict (git).
+;;@doc
+;; Continue a paused rebase after resolving an edit/conflict (git).
 (define (juju-rebase-continue)
   (with-cap 'rebase-interactive (lambda (b) (report (backend-rebase-continue b)))))
 
-;;@doc Abort a paused rebase, restoring the original tip (git).
+;;@doc
+;; Abort a paused rebase, restoring the original tip (git).
 (define (juju-rebase-abort)
   (with-cap 'rebase-interactive (lambda (b) (report (backend-rebase-abort b)))))
 
-;;@doc Skip the current commit in a paused rebase (git).
+;;@doc
+;; Skip the current commit in a paused rebase (git).
 (define (juju-rebase-skip)
   (with-cap 'rebase-interactive (lambda (b) (report (backend-rebase-skip b)))))
 
-;;@doc Cherry-pick a commit onto the current branch: :juju-cherry-pick <rev> (git).
+;;@doc
+;; Cherry-pick a commit onto the current branch: :juju-cherry-pick <rev> (git).
 (define (juju-cherry-pick . args)
   (with-cap 'cherry-pick
     (lambda (b)
@@ -334,7 +356,8 @@
         (set-status! "juju: usage - :juju-cherry-pick <rev>")
         (report (backend-cherry-pick b (to-string (car args)) (hash)))))))
 
-;;@doc Revert a commit: :juju-revert <rev>.
+;;@doc
+;; Revert a commit: :juju-revert <rev>.
 (define (juju-revert . args)
   (with-cap 'revert
     (lambda (b)
@@ -342,7 +365,8 @@
         (set-status! "juju: usage - :juju-revert <rev>")
         (report (backend-revert b (to-string (car args)) (hash)))))))
 
-;;@doc Reset HEAD: :juju-reset [soft|mixed|hard] [rev]. Hard confirms first.
+;;@doc
+;; Reset HEAD: :juju-reset [soft|mixed|hard] [rev]. Hard confirms first.
 (define (juju-reset . args)
   (with-cap 'reset
     (lambda (b)
@@ -356,14 +380,16 @@
                 (when (confirmed? input) (report (backend-reset b mode rev (hash)))))))
           (report (backend-reset b mode rev (hash))))))))
 
-;;@doc Squash into a change: :juju-squash [rev] (jj; folds @ into parent or rev).
+;;@doc
+;; Squash into a change: :juju-squash [rev] (jj; folds @ into parent or rev).
 (define (juju-squash . args)
   (with-cap 'squash
     (lambda (b)
       (let ([into (if (pair? args) (to-string (car args)) #f)])
         (report (backend-squash b (if into (hash 'into into) (hash))))))))
 
-;;@doc Split files out of @ into a new change: :juju-split <path...> (jj).
+;;@doc
+;; Split files out of @ into a new change: :juju-split <path...> (jj).
 ;; With no path, splits out the current file.
 (define (juju-split . args)
   (with-cap 'split
@@ -373,13 +399,15 @@
           (set-status! "juju: usage - :juju-split <path> (or open a file to split out)")
           (report (backend-split b paths (hash))))))))
 
-;;@doc Abandon a change: :juju-abandon [rev] (jj; @ when omitted).
+;;@doc
+;; Abandon a change: :juju-abandon [rev] (jj; @ when omitted).
 (define (juju-abandon . args)
   (with-cap 'abandon
     (lambda (b)
       (report (backend-abandon b (if (pair? args) (to-string (car args)) #f) (hash))))))
 
-;;@doc Set @'s description: :juju-describe [message] (jj; prompts when omitted).
+;;@doc
+;; Set @'s description: :juju-describe [message] (jj; prompts when omitted).
 (define (juju-describe . args)
   (with-cap 'describe
     (lambda (b)
@@ -397,7 +425,8 @@
 ;;; through the backend's capability and op symbols. set-upstream and the stash
 ;;; family are git-only and report "not supported" under jj.
 
-;;@doc Switch to a branch/bookmark or commit: :juju-switch <target> (prompts if omitted).
+;;@doc
+;; Switch to a branch/bookmark or commit: :juju-switch <target> (prompts if omitted).
 (define (juju-switch . args)
   (with-cap 'switch
     (lambda (b)
@@ -408,7 +437,8 @@
             (lambda (input)
               (when (not (blank? input)) (report (backend-switch b input))))))))))
 
-;;@doc Edit a change, making it the working copy: :juju-edit <rev> (jj; prompts if omitted).
+;;@doc
+;; Edit a change, making it the working copy: :juju-edit <rev> (jj; prompts if omitted).
 (define (juju-edit . args)
   (with-cap 'edit
     (lambda (b)
@@ -419,7 +449,8 @@
             (lambda (input)
               (when (not (blank? input)) (report (backend-edit b input))))))))))
 
-;;@doc Create a branch/bookmark: :juju-branch-create <name> [rev] (prompts for name if omitted).
+;;@doc
+;; Create a branch/bookmark: :juju-branch-create <name> [rev] (prompts for name if omitted).
 (define (juju-branch-create . args)
   (with-cap 'branch
     (lambda (b)
@@ -432,7 +463,8 @@
             (lambda (input)
               (when (not (blank? input)) (report (backend-branch-create b input #f))))))))))
 
-;;@doc Set/move a branch/bookmark to a rev: :juju-branch-set <name> [rev] (rev defaults to current; prompts for name if omitted).
+;;@doc
+;; Set/move a branch/bookmark to a rev: :juju-branch-set <name> [rev] (rev defaults to current; prompts for name if omitted).
 (define (juju-branch-set . args)
   (with-cap 'branch
     (lambda (b)
@@ -445,7 +477,8 @@
             (lambda (input)
               (when (not (blank? input)) (report (backend-branch-set b input #f))))))))))
 
-;;@doc Rename a branch/bookmark: :juju-branch-rename <old> <new>.
+;;@doc
+;; Rename a branch/bookmark: :juju-branch-rename <old> <new>.
 (define (juju-branch-rename . args)
   (with-cap 'branch
     (lambda (b)
@@ -453,7 +486,8 @@
         (set-status! "juju: usage - :juju-branch-rename <old> <new>")
         (report (backend-branch-rename b (to-string (car args)) (to-string (cadr args))))))))
 
-;;@doc Delete a branch/bookmark: :juju-branch-delete <name>.
+;;@doc
+;; Delete a branch/bookmark: :juju-branch-delete <name>.
 (define (juju-branch-delete . args)
   (with-cap 'branch
     (lambda (b)
@@ -461,7 +495,8 @@
         (set-status! "juju: usage - :juju-branch-delete <name>")
         (report (backend-branch-delete b (to-string (car args)) (hash)))))))
 
-;;@doc Set a branch's upstream: :juju-set-upstream <branch> <upstream> (git).
+;;@doc
+;; Set a branch's upstream: :juju-set-upstream <branch> <upstream> (git).
 (define (juju-set-upstream . args)
   (with-cap 'set-upstream
     (lambda (b)
@@ -469,31 +504,36 @@
         (set-status! "juju: usage - :juju-set-upstream <branch> <upstream>")
         (report (backend-set-upstream b (to-string (car args)) (to-string (cadr args))))))))
 
-;;@doc Stash the working changes: :juju-stash [message] (git).
+;;@doc
+;; Stash the working changes: :juju-stash [message] (git).
 (define (juju-stash . args)
   (with-cap 'stash
     (lambda (b)
       (let ([msg (args->message args)])
         (report (backend-stash b (if msg (hash 'message msg) (hash))))))))
 
-;;@doc Pop a stash: :juju-stash-pop [stash@{N}] (git; latest when omitted).
+;;@doc
+;; Pop a stash: :juju-stash-pop [stash@{N}] (git; latest when omitted).
 (define (juju-stash-pop . args)
   (with-cap 'stash
     (lambda (b) (report (backend-stash-pop b (if (pair? args) (to-string (car args)) #f))))))
 
-;;@doc Apply a stash without dropping it: :juju-stash-apply [stash@{N}] (git).
+;;@doc
+;; Apply a stash without dropping it: :juju-stash-apply [stash@{N}] (git).
 (define (juju-stash-apply . args)
   (with-cap 'stash
     (lambda (b) (report (backend-stash-apply b (if (pair? args) (to-string (car args)) #f))))))
 
-;;@doc Drop a stash: :juju-stash-drop [stash@{N}] (git; latest when omitted).
+;;@doc
+;; Drop a stash: :juju-stash-drop [stash@{N}] (git; latest when omitted).
 (define (juju-stash-drop . args)
   (with-cap 'stash
     (lambda (b) (report (backend-stash-drop b (if (pair? args) (to-string (car args)) #f))))))
 
 ;;; Read-only listings (typed commands) ;;;
 
-;;@doc Show all refs: branches/tags/remotes (git) or bookmarks (jj).
+;;@doc
+;; Show all refs: branches/tags/remotes (git) or bookmarks (jj).
 (define (juju-refs)
   (let ([b (resolve-backend)])
     (when b
@@ -501,7 +541,8 @@
         (string-append " juju refs (" (symbol->string (backend-name b)) ") ")
         (backend-refs b)))))
 
-;;@doc Show the configured remotes.
+;;@doc
+;; Show the configured remotes.
 (define (juju-remote)
   (let ([b (resolve-backend)])
     (when b
@@ -509,17 +550,20 @@
         (string-append " juju remotes (" (symbol->string (backend-name b)) ") ")
         (backend-remotes b)))))
 
-;;@doc Show the jj operation log.
+;;@doc
+;; Show the jj operation log.
 (define (juju-oplog)
   (with-cap 'oplog
     (lambda (b) (show-text-view " juju op log " (backend-oplog b)))))
 
-;;@doc Show the git reflog.
+;;@doc
+;; Show the git reflog.
 (define (juju-reflog)
   (with-cap 'reflog
     (lambda (b) (show-text-view " juju reflog " (backend-reflog b)))))
 
-;;@doc Show the worktrees (git) or workspaces (jj).
+;;@doc
+;; Show the worktrees (git) or workspaces (jj).
 (define (juju-worktree)
   (let ([b (resolve-backend)])
     (when b
@@ -527,7 +571,8 @@
         (string-append " juju worktrees (" (symbol->string (backend-name b)) ") ")
         (backend-worktrees b)))))
 
-;;@doc Show the submodule status (git; jj has none).
+;;@doc
+;; Show the submodule status (git; jj has none).
 (define (juju-submodule)
   (let ([b (resolve-backend)])
     (when b
@@ -601,7 +646,8 @@
     (hash)
     flags))
 
-;;@doc Open the rebase transient (--autosquash on git, --skip-emptied on jj; action: onto a ref).
+;;@doc
+;; Open the rebase transient (--autosquash on git, --skip-emptied on jj; action: onto a ref).
 (define (juju-rebase-menu)
   (with-cap 'rebase
     (lambda (b) (show-menu (menu-title b "Rebase") (rebase-menu-entries b)))))
@@ -643,7 +689,8 @@
       [(null? commits) (set-status! "juju: no commits to rebase in range")]
       [else (open-rebase-view (make-todo commits) (rebase-apply-callback b resolved))])))
 
-;;@doc Open the remote transient (fetch / pull / push, with per-action switches).
+;;@doc
+;; Open the remote transient (fetch / pull / push, with per-action switches).
 (define (juju-remote-menu)
   (with-cap 'fetch
     (lambda (b) (show-menu (menu-title b "Remote") (remote-menu-entries b)))))
@@ -678,7 +725,8 @@
           (report (backend-mutate b 'push
                    (list (switch-opts switches '(force set-upstream))))))))))
 
-;;@doc Open the branch/bookmark transient (create / switch / rename / delete).
+;;@doc
+;; Open the branch/bookmark transient (create / switch / rename / delete).
 (define (juju-branch-menu)
   (with-cap 'branch
     (lambda (b) (show-menu (menu-title b "Branch / bookmark") (branch-menu-entries b)))))
@@ -739,7 +787,8 @@
                           (when (not (blank? up)) (report (backend-set-upstream b name up)))))))))))))
       '())))
 
-;;@doc Open the commit transient (--no-verify / --signoff on git; commit / amend).
+;;@doc
+;; Open the commit transient (--no-verify / --signoff on git; commit / amend).
 (define (juju-commit-menu)
   (with-cap 'commit
     (lambda (b) (show-menu (menu-title b "Commit") (commit-menu-entries b)))))
@@ -774,7 +823,8 @@
          [h (if (sw switches 'signoff) (hash-insert h 'signoff #t) h)])
     h))
 
-;;@doc Open the log transient (-n count infix, then show the log).
+;;@doc
+;; Open the log transient (-n count infix, then show the log).
 (define (juju-log-menu)
   (let ([b (resolve-backend)])
     (when b (show-menu (menu-title b "Log") (log-menu-entries b)))))
@@ -793,7 +843,8 @@
   (let ([n (and (string? s) (string->number (string-trim s)))])
     (if (and (integer? n) (> n 0)) n default)))
 
-;;@doc Open the top-level transient: a menu of the juju sub-menus.
+;;@doc
+;; Open the top-level transient: a menu of the juju sub-menus.
 (define (juju-dispatch)
   (let ([b (resolve-backend)])
     (when b (show-menu (menu-title b "Dispatch") (dispatch-entries)))))
@@ -815,28 +866,36 @@
 ;;; reaches for their backend's term and lands on the same juju command. These add
 ;;; no behaviour: they delegate to the canonical command (which gates by capability).
 
-;;@doc Alias of :juju-blame (git says blame; jj says `file annotate`).
+;;@doc
+;; Alias of :juju-blame (git says blame; jj says `file annotate`).
 (define (juju-annotate) (juju-blame))
 
-;;@doc Alias of :juju-describe (jj reword): :juju-reword [message].
+;;@doc
+;; Alias of :juju-describe (jj reword): :juju-reword [message].
 (define (juju-reword . args) (apply juju-describe args))
 
-;;@doc Alias of :juju-abandon (jj drop): :juju-drop [rev].
+;;@doc
+;; Alias of :juju-abandon (jj drop): :juju-drop [rev].
 (define (juju-drop . args) (apply juju-abandon args))
 
-;;@doc Alias of :juju-branch-create (jj bookmark): :juju-bookmark-create <name> [rev].
+;;@doc
+;; Alias of :juju-branch-create (jj bookmark): :juju-bookmark-create <name> [rev].
 (define (juju-bookmark-create . args) (apply juju-branch-create args))
 
-;;@doc Alias of :juju-branch-set (jj bookmark set): :juju-bookmark-set <name> [rev].
+;;@doc
+;; Alias of :juju-branch-set (jj bookmark set): :juju-bookmark-set <name> [rev].
 (define (juju-bookmark-set . args) (apply juju-branch-set args))
 
-;;@doc Alias of :juju-branch-set (jj bookmark move): :juju-bookmark-move <name> [rev].
+;;@doc
+;; Alias of :juju-branch-set (jj bookmark move): :juju-bookmark-move <name> [rev].
 (define (juju-bookmark-move . args) (apply juju-branch-set args))
 
-;;@doc Alias of :juju-branch-rename (jj bookmark): :juju-bookmark-rename <old> <new>.
+;;@doc
+;; Alias of :juju-branch-rename (jj bookmark): :juju-bookmark-rename <old> <new>.
 (define (juju-bookmark-rename . args) (apply juju-branch-rename args))
 
-;;@doc Alias of :juju-branch-delete (jj bookmark): :juju-bookmark-delete <name>.
+;;@doc
+;; Alias of :juju-branch-delete (jj bookmark): :juju-bookmark-delete <name>.
 (define (juju-bookmark-delete . args) (apply juju-branch-delete args))
 
 ;;; Mutation plumbing ;;;

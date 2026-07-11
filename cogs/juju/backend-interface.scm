@@ -108,7 +108,8 @@
       mutate-fn
       query-fn)))
 
-;;@doc #t when `cap` is in the backend's capability set.
+;;@doc
+;; #t when `cap` is in the backend's capability set.
 (define (backend-supports? b cap)
   (and (member cap (backend-capabilities b)) #t))
 
@@ -133,16 +134,20 @@
 
 ;;; Read operations ;;;
 
-;;@doc Produce the backend's `status` struct.
+;;@doc
+;; Produce the backend's `status` struct.
 (define (backend-status b) ((backend-status-fn b) b))
 
-;;@doc Diff for `target` (a target hash, see backend-git) -> list of hunk.
+;;@doc
+;; Diff for `target` (a target hash, see backend-git) -> list of hunk.
 (define (backend-diff b target) ((backend-diff-fn b) b target))
 
-;;@doc Log for `revset`/`range` with `opts` -> list of commit-record.
+;;@doc
+;; Log for `revset`/`range` with `opts` -> list of commit-record.
 (define (backend-log b revset opts) ((backend-log-fn b) b revset opts))
 
-;;@doc Show a single rev -> hash with 'commit and 'hunks.
+;;@doc
+;; Show a single rev -> hash with 'commit and 'hunks.
 (define (backend-show b rev) ((backend-show-fn b) b rev))
 
 ;;; Read-only listings ;;;
@@ -151,7 +156,8 @@
 ;;; backend-mutate. Each returns a list of display lines (or '() when the backend
 ;;; provides nothing for that op), so a text view can show them without parsing.
 
-;;@doc Invoke read-only listing `op` with `args` (a list) -> value (usually lines).
+;;@doc
+;; Invoke read-only listing `op` with `args` (a list) -> value (usually lines).
 (define (backend-query b op args)
   (let ([qfn (backend-query-fn b)])
     (if qfn (qfn b op args) '())))
@@ -174,7 +180,8 @@
 ;;; VCS. A backend without a mutate-fn (or that returns #f for an op) yields an
 ;;; unsupported-result, so callers report it uniformly.
 
-;;@doc Invoke mutating operation `op` with `args` (a list) -> result hash.
+;;@doc
+;; Invoke mutating operation `op` with `args` (a list) -> result hash.
 (define (backend-mutate b op args)
   (let ([mfn (backend-mutate-fn b)])
     (if mfn
@@ -254,7 +261,8 @@
 ;;; Every mutating op returns a uniform result hash so command code reports
 ;;; success/failure identically across backends.
 
-;;@doc Build a result hash: 'ok bool, 'message str, 'raw process-hash-or-#f.
+;;@doc
+;; Build a result hash: 'ok bool, 'message str, 'raw process-hash-or-#f.
 (define (make-result ok? message raw)
   (hash 'ok ok? 'message message 'raw raw))
 
@@ -262,7 +270,8 @@
 
 (define (err-result message raw) (make-result #f message raw))
 
-;;@doc Result reported when a backend does not implement `op` at all.
+;;@doc
+;; Result reported when a backend does not implement `op` at all.
 (define (unsupported-result op)
   (make-result #f
     (string-append "not supported: " (symbol->string op))
