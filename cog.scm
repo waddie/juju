@@ -18,7 +18,7 @@
 ;;; Forge copies this directory to ~/.steel/cogs/juju/.
 
 (define package-name 'juju)
-(define version "0.3.7-alpha")
+(define version "0.3.8-alpha")
 
 ;; Shared library dependencies, installed to ~/.steel/cogs/<name>/ alongside
 ;; juju (Forge does this; install.sh does the same by hand). One installed copy
@@ -31,7 +31,7 @@
      #:git-url
      "https://github.com/waddie/ui-utils.hx"
      #:sha
-     "2998d8229330e433e483745fc8750702b8d134e4")
+     "0f9e4d2a6f199f8c5db07e8176e1b1abf6af85d0")
     (#:name "run-command"
      #:git-url
      "https://github.com/waddie/run-command.scm"
