@@ -30,7 +30,7 @@ Then add to `~/.config/helix/init.scm`:
 
 From a checkout:
 
-```
+```sh
 ./install.sh
 ```
 
@@ -251,12 +251,16 @@ The colour symbol is one of `'yellow 'green 'cyan 'blue 'magenta 'red 'white`
 
 ## Development
 
-Pure parsers (diff, porcelain status, `jj` summary, log records) are
-unit tested:
+Pure parsers (diff, status, `jj` summary, log records) and projections are unit tested, split
+by concern across `tests/test-*.scm`:
 
-```
+```sh
 ./tests/run.sh
 ```
+
+Each suite is a `steel-test` file run in file mode; the
+[steel-test](https://github.com/waddie/steel-test) package must be installed in
+`~/.steel/cogs`.
 
 ## License
 
