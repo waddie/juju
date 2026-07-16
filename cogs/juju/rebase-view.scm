@@ -101,9 +101,6 @@
 ;; Prompt for each reword message in turn, then apply. Chained because each
 ;; prompt is its own modal: the callback for one pushes the next. An empty answer
 ;; keeps the commit's existing message (it stays an effective pick at apply).
-;; Both branches end in `#t`, a real value: with every reachable tail branch
-;; yielding void, Steel's TCO miscompiles the prompt callback and the resulting
-;; BadSyntax error tears the editor down (same quirk as status-view move-cursor!).
 (define (collect-rewords entries rewords on-apply)
   (if (null? rewords)
     (begin

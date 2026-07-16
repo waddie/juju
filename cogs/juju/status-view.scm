@@ -107,9 +107,6 @@
   (let* ([rows (current-rows state)]
          [n (length rows)])
     (when (> n 0)
-      ;; Each branch returns a real value (the unused cursor index), never bare
-      ;; (void): Steel miscompiles a loop whose every tail branch evaluates to
-      ;; void, treating the (void) literal as an application (#<void> applied).
       (let loop ([c (view-state-cursor state)] [steps n])
         (let ([next (+ c delta)])
           (cond
@@ -279,7 +276,7 @@
   (let* ([state (unbox state-box)]
          [row (current-row state)])
     (cond
-      [(not row) (void)]
+      [(not row) void]
       [(eq? (row-type row) 'file)
         (let ([path (file-item-path (row-object row))]
               [root (backend-root (view-state-backend state))])
